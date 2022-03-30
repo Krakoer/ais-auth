@@ -1,5 +1,6 @@
 #include <pbc/pbc.h>
 #include <pbc/pbc_test.h>
+#include <string.h>
 #include <openssl/pem.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -70,7 +71,14 @@ void read_element(char *filename, element_t e, char *target_name){
         free(line);
 }
 
-void register_id(unsigned char *id){
+void read_from_base64(char* b64, element_t e){
+    int bytes_to_decode = strlen(b64);
+    char *base64_decoded = base64decode(b64, bytes_to_decode);
+    element_from_bytes(e, base64_decoded);
+    free(base64_decoded);
+}
+
+void sign(unsigned char *message){
     // Setup pairing
     pairing_t pairing;
     char param[1024];
@@ -79,62 +87,57 @@ void register_id(unsigned char *id){
     pairing_init_set_buf(pairing, param, count);
     if (!pairing_is_symmetric(pairing)) pbc_die("pairing must be symmetric");
 
-    // Read public params and private key
-    element_t s, P1, si;
-
-    element_init_G1(P1, pairing);
-    element_init_Zr(s, pairing);
-    element_init_Zr(si, pairing);
-
-    element_set0(P1);
-    element_set0(s);
-    read_element("p_params.txt", P1, "P1");
-    read_element("s_key.txt", s, "s");
-    element_invert(si, s);
-
-    // Generate private key 
-    element_t Rid, rid, t3, sid, hid, t4;
+    element_t kid, sid, xid, P2, Pid, Rid, t3, sign;
     mpz_t t1, t2;
+
     mpz_init(t1);
     mpz_init(t2);
-
+    element_init_G1(P2, pairing);
+    element_init_G1(Pid, pairing);
     element_init_G1(Rid, pairing);
-    element_init_Zr(rid, pairing);
-    element_init_Zr(t4, pairing);
-    element_init_Zr(hid, pairing);
+    element_init_G1(sign, pairing);
+
+    element_init_Zr(kid, pairing);
     element_init_Zr(sid, pairing);
+    element_init_Zr(xid, pairing);
     element_init_Zr(t3, pairing);
 
-    // Rid = rid * Ppub1
-    element_random(rid);
-    element_mul_zn(Rid, P1, rid);
-    // hid = H1(ID, Rid, Ppub1)
-    // H1(m, a, b) = H(m)*mpz(a)*mpz(b)
-    element_to_mpz(t1, Rid);
-    element_to_mpz(t2, P1);
-    element_from_hash(t3, id, 32); // Identity (sha256)
-    element_mul_mpz(t3, t3, t1);
-    element_mul_mpz(hid, t3, t2);
-    // sid = (rID + s-1*hid) mod q
-    element_mul_zn(t4, si, hid);
-    element_add(sid, rid, t4);
+    read_element("params.txt", P2, "P2");
+    read_element("private.key", xid, "xid"),
+    read_element("private.key", sid, "sid"),
+    read_element("public.key", Pid, "Pid"),
+    read_element("public.key", Rid, "Rid"),
 
-    write_element(stdout, sid, "sid");
-    write_element(stdout, Rid, "Rid");
+    element_to_mpz(t1, Pid);
+    element_to_mpz(t2, Rid);
 
-    element_clear(s);
-    element_clear(P1);
-    element_clear(si);
-    element_clear(Rid);
-    element_clear(rid);
-    element_clear(t4);
-    element_clear(hid);
-    element_clear(sid);
-    element_clear(t3);
+    // kid = H1(m, Rid, Pid)
+    element_from_hash(kid, message, 32); // 32 because input is SHA256
+    element_mul_mpz(kid, kid, t1);
+    element_mul_mpz(kid, kid, t2);
+
+    // sign = (kid*sid+xid)-1 * P2
+
+    element_mul_zn(t3, kid, sid);
+    element_add(t3, t3, xid);
+    element_invert(t3, t3);
+
+    element_mul_zn(sign, P2, t3);
+
+    // Base64-encode and send sign
+    int n = pairing_length_in_bytes_G1(pairing);
+    unsigned char* data = malloc(n);
+    element_to_bytes(data, sign);
+    char *enc = base64encode(data, n);
+
+    printf("%s\n", enc);
+    free(data);
+    free(enc);
     pairing_clear(pairing);
 }
 
-void setup(){
+int verify(unsigned char *message, char *signature, unsigned char* id_h, char* Rid_b64, char* Pid_b64){
+    // Setup pairing
     pairing_t pairing;
     char param[1024];
     size_t count = fread(param, 1, 1024, stdin);
@@ -142,70 +145,111 @@ void setup(){
     pairing_init_set_buf(pairing, param, count);
     if (!pairing_is_symmetric(pairing)) pbc_die("pairing must be symmetric");
 
-    element_t P, s, P1, P2, si, g;
 
-    element_init_G1(P, pairing);
+    element_t hid, Rid, Pid, kid, m, sign, signP, g, id, t1, P1, P;
+    mpz_t P1_mpz, Rid_mpz, Pid_mpz;
+
+    mpz_init(P1_mpz);
+    mpz_init(Rid_mpz);
+    mpz_init(Pid_mpz);
+    element_init_G1(sign, pairing);
+    element_init_G1(signP, pairing);
+    element_init_G1(Rid, pairing);
+    element_init_G1(Pid, pairing);
     element_init_G1(P1, pairing);
-    element_init_G1(P2, pairing);    
+    element_init_G1(P, pairing);
 
-    element_init_Zr(s, pairing);
-    element_init_Zr(si, pairing);
+    element_init_Zr(kid, pairing);
+    element_init_Zr(id, pairing);
+    element_init_Zr(hid, pairing);
+    element_init_Zr(m, pairing);
 
+    element_init_GT(t1, pairing);
     element_init_GT(g, pairing);
 
 
-    // printf("Setup public params...\n");
-    element_random(P);
-    element_random(s);
-    element_mul_zn(P1, P, s);
-    element_invert(si, s);
-    element_mul_zn(P2, P, si);
-    element_pairing(g, P, P);
+    // Load from file
 
-    // Write public params to p_params.txt (base64 encoded)
+    read_element("params.txt", g, "g");
+    read_element("params.txt", P1, "P1");
+    read_element("params.txt", P, "P1");
 
-    FILE* fd = fopen("p_params.txt", "w");
-    if(fd == NULL) {
-        printf("Error opening output file\n");
-        exit(1);
-    } 
-    write_element(fd, P, "P");
-    write_element(fd, P1, "P1");
-    write_element(fd, P2, "P2");
-    write_element(fd, g, "g");
-    fclose(fd);
+    // Load from input 
+    read_from_base64(signature, sign);
+    read_from_base64(Pid_b64, Pid);
+    read_from_base64(Rid_b64, Rid);
 
-    // Write secret key to s_key.txt (base64 encoded)
+    element_from_hash(id, id_h, 32);
+    element_from_hash(m, message, 32);
 
-    fd = fopen("s_key.txt", "w");
-    if(fd == NULL) {
-        printf("Error opening output file\n");
-        exit(1);
-    } 
-    write_element(fd, s, "s");
-    fclose(fd);
+    // Compute hid = H1(ID, Rid, P1)
+    // element_set1(hid);
+    element_to_mpz(Rid_mpz, Rid);
+    element_to_mpz(P1_mpz, P1);
+    element_mul_mpz(hid, id, Rid_mpz);
+    element_mul_mpz(hid, hid, P1_mpz);
 
-    // Cleaning
-    element_clear(P);
-    element_clear(s);
-    element_clear(P1);
-    element_clear(P2);
-    element_clear(g);
-    element_clear(si);
+    // Compute kid = H1(m, Rid, Pid)
+    // element_set1(kid);
+    element_to_mpz(Pid_mpz, Pid);
+    element_mul_mpz(kid, m, Rid_mpz);
+    element_mul_mpz(kid, kid, Pid_mpz);
+
+    // Compute signP = kid(Rid+hid*P)+Pid
+    element_set1(signP);
+    element_mul_zn(signP, P, hid);
+    element_add(signP, signP, Rid);
+    element_mul_zn(signP, signP, kid);
+    element_add(signP, signP, Pid);
+    element_pairing(t1, sign, signP);
+
+    // Verify
+    if (!element_cmp(t1, g)) {
+        printf("Signature is valid!\n");
+    } else {
+        printf("Signature is invalid!\n");
+    }
+
     pairing_clear(pairing);
 }
 
+void setup(){
+    // Setup pairing
+    pairing_t pairing;
+    char param[1024];
+    size_t count = fread(param, 1, 1024, stdin);
+    if (!count) pbc_die("input error");
+    pairing_init_set_buf(pairing, param, count);
+    if (!pairing_is_symmetric(pairing)) pbc_die("pairing must be symmetric");
+
+    element_t xid, Pid, P1;
+
+    element_init_G1(Pid, pairing);
+    element_init_G1(P1, pairing);
+    element_init_Zr(xid, pairing);
+
+    read_element("params.txt", P1, "P1");
+
+    element_random(xid);
+    element_mul_zn(Pid, P1, xid);
+    write_element(stdout, Pid, "Pid");
+    write_element(stdout, xid, "xid");
+
+    pairing_clear(pairing);
+}
+
+
+
 int main(int argc, char* argv[]){
     if(argc >= 2){
-        if(!strcmp(argv[1], "setup")){
-            // printf("Setup\n");
-            setup();
-            return 0;
+        if(argc == 3 && !strcmp(argv[1], "sign")){
+            sign(argv[2]);
         }
-        else if(!strcmp(argv[1], "register") && argc >= 2){
-            // printf("Registering %s\n", argv[2]);
-            register_id(argv[2]);
-            return 0;
+        if(!strcmp(argv[1], "setup")){
+            setup();
+        }
+        if(argc == 7 && !strcmp(argv[1], "verify")){
+            verify(argv[2], argv[3], argv[4], argv[5], argv[6]);
         }
     }
     return 0;

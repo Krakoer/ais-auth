@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 import subprocess
+import hashlib
 
 class ID(BaseModel):
     id: str
@@ -12,8 +13,8 @@ async def public():
         with open("p_params.txt", 'r') as f:
             params = {}
             for l in f.readlines():
-                name = l.split(':')[0]
-                value = l.split(':')[1]
+                name = l.strip().split(':')[0]
+                value = l.strip().split(':')[1]
                 params[name] = value
         return params
 
@@ -26,7 +27,9 @@ async def public():
 async def register(_id: ID):
     print(f"Registering {_id.id}")
     try:
-        res = subprocess.run(["./KGC", "register", _id.id], capture_output=True, text=True, stdin=open("a.param"))
+        h = hashlib.sha256()
+        h.update(_id.id.encode("ascii"))
+        res = subprocess.run(["./KGC", "register", h.digest()], capture_output=True, text=True, stdin=open("a.param"))
         output = res.stdout.strip()
         res = {}
         for l in output.splitlines():
