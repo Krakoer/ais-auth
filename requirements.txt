@@ -1,3 +1,5 @@
 fastapi[all]
 uvicorn[standard]
 pyzmq
+pyais
+botlle

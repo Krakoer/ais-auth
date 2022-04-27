@@ -1,21 +1,17 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 import subprocess
-import hashlib
-
-class ID(BaseModel):
-    id: str
+from tsai import TsaiKGC
+import json
+from hashlib import sha256
 
 app = FastAPI()
 @app.get("/params")
-async def public():
-    try: 
-        with open("p_params.txt", 'r') as f:
-            params = {}
-            for l in f.readlines():
-                name = l.strip().split(':')[0]
-                value = l.strip().split(':')[1]
-                params[name] = value
+async def public(kgc_id :str):
+    try:
+        id_h = sha256(kgc_id.encode('ascii'))
+        with open(f"{id_h}/params.txt", 'r') as f:
+            params = json.load(f)
         return params
 
     except e:
@@ -24,12 +20,11 @@ async def public():
 
 
 @app.post("/register")
-async def register(_id: ID):
-    print(f"Registering {_id.id}")
+async def register(_id: str, kgc_id:str):
+    print(f"Registering {_id.id} to {kgc_id}")
     try:
-        h = hashlib.sha256()
-        h.update(_id.id.encode("ascii"))
-        res = subprocess.run(["./KGC", "register", h.digest()], capture_output=True, text=True, stdin=open("a.param"))
+        h = sha256(_id.encode('ascii'))
+        
         output = res.stdout.strip()
         res = {}
         for l in output.splitlines():
