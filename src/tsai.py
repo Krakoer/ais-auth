@@ -174,7 +174,7 @@ class TsaiUser:
         kid_h = sha256(message+to_bytes(self.public_key.Rid)+to_bytes(self.public_key.Pid)).digest()
         kid = Element.from_hash(self.pairing, Zr, kid_h)
         sign = self.public_params.P2*((kid * self.private_key.sid + self.private_key.xid)**-1)
-        return sign
+        return to_bytes(sign)
 
     def verify(self, message, signature, identity, publickey: PublicKey):
         if self.public_key == None:
