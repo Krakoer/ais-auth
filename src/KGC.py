@@ -62,8 +62,10 @@ class KGC:
     def _register(self, _id):
         print(f"[{self.ID}]: Registering {_id}")
         try:
-            h = sha256(_id.encode('ascii')).digest()
-            keys = self.tsai.partial_keygen(h)
+            if type(_id) == str:
+                _id = _id.encode("ascii")
+            assert type(_id) == bytes, "_id must be bytes for registration"
+            keys = self.tsai.partial_keygen(_id)
             return keys
         except Exception as e:
             abort(404, f"Error while registering : {e}")

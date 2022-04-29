@@ -173,25 +173,36 @@ class TsaiUser:
             raise Exception("Public params is not initialized")
         kid_h = sha256(message+to_bytes(self.public_key.Rid)+to_bytes(self.public_key.Pid)).digest()
         kid = Element.from_hash(self.pairing, Zr, kid_h)
+
         sign = self.public_params.P2*((kid * self.private_key.sid + self.private_key.xid)**-1)
         return to_bytes(sign)
 
-    def verify(self, message, signature, identity, publickey: PublicKey):
-        if self.public_key == None:
-            raise Exception("Public key is not initialized")
-        if self.private_key == None:
-            raise Exception("Private key is not initialized")
+    def verify(self, message, signature, identity, publickey_dict):
+        """
+        Args:
+            - message in bytes
+            - signature in bytes
+            - identity in bytes
+            - public key as a dict
+        """
         if self.public_params == None:
             raise Exception("Public params is not initialized")
 
+        publickey = PublicKey(
+            Element(self.pairing, G1, publickey_dict["Pid"]),
+            Element(self.pairing, G1, publickey_dict["Rid"]),
+        )
+
         h = sha256(identity+to_bytes(self.public_params.P1)+to_bytes(publickey.Rid)).digest()
         hid = Element.from_hash(self.pairing, Zr, h)
+        print(f"identoty from vrfy : {identity}")
 
         kid_h = sha256(message+to_bytes(publickey.Rid)+to_bytes(publickey.Pid)).digest()
         kid = Element.from_hash(self.pairing, Zr, kid_h)
-        
+        print(f"kid from vrfy : {kid}")
         signP = Element(self.pairing, G1, (publickey.Rid + self.public_params.P*hid)*kid + publickey.Pid)
-        signature = Element(self.pairing, G1, signature)
+        signature = Element(self.pairing, G1, signature.hex())
+
         return self.public_params.g == self.pairing.apply(signP, signature)
 
 def test():

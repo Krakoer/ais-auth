@@ -3,3 +3,4 @@ uvicorn[standard]
 pyzmq
 pyais
 botlle
+minilogger

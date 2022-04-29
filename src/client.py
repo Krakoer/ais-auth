@@ -10,9 +10,10 @@ import os
 import shutil
 from tsai import TsaiUser
 import time
+from minilogger import *
 
 class Client:
-    def __init__(self, ID, param_path, KGC_url_dict, KGC_id, auth=True, verify=False, simulate = True):
+    def __init__(self, ID, param_path, KGC_url_dict, KGC_id, auth=True, verify=True, simulate = True):
         self.ID = ID
         self.ID_h = sha256(self.ID.encode("ascii")).hexdigest()
 
@@ -24,7 +25,18 @@ class Client:
         self.KGC_id_h = sha256(KGC_id.encode("ascii")).hexdigest()
         
         self.tsai = TsaiUser(param_path)
+        self.tsai_verify = TsaiUser(param_path)
 
+
+        ## For now, repos are manually setup !
+        self.public_key_repo = {
+            "888888888": {"Pid": "0308E7B3616335E365487E4A4682AC0B4D275BB33AD58ABC55FA992645D3EF914F7EC48DEB3B6D56E991B351350C4A0C98BBCF196C7000EAFCBF6505BF22807F7C", "Rid": "0252D7B4D39B6F3F9E2EFC639117C55F7EA69E3867800A6A7E1083B099E3B77A310143500C012AC5BC018AD88652ED4848C3DB309986C147F21ABD62597D56E03A"},
+            "444444444": {"Pid": "022A17F08B0782E8B3AF04A35022DF4D0323EE9EAD238CF4E6858EF11D2CC28147D221BA9E36811F60435B4F3B6C25AB692E8039FFBC47EDF583FEAAD7620EB970", "Rid": "0351D6CBB881239EC266DED4285669AE57515C77BE85F535A37D470C1B8E8BC5CB91069DE2B67CFDC3D1F4EA8920BEEBE9702D0F187E49CC878F3A1EF0A4E21A39"},
+        } # Keys : MMSIs, values : public keys
+        self.KGC_repo = {
+            "888888888": "KGC1",
+            "444444444": "KGC2",
+        } # Keys : MMSIs, values : KGC id
 
         self.auth = auth
         self.verify = verify
@@ -134,21 +146,49 @@ class Client:
     def send(self, message):
         if self.simulate:
             if self.auth:
-                # First we need to sign the message 
-                self.push_sock.send_multipart([self.topic, message])
+                # First we need to sign the message
                 signature = self.tsai.sign(sha256(message).digest())
-                self.push_sock.send_multipart([self.topic, signature])
+
+                msg = self.ID.encode("ascii")+b"::"+message+b"::"+signature
+                self.push_sock.send_multipart([self.topic, msg])
+                
             else:
                 self.push_sock.send_multipart([self.topic, message])
+
+    def get_kgc_params(self, kgc_id):
+        """
+        try to fetch sha256(id)_params.txt as json
+        returns dict
+        """
+        if type(kgc_id) == str:
+            kgc_id = kgc_id.encode("ascii")
+        h = sha256(kgc_id).hexdigest()
+        with open(f"{self.ID_h}/{h}_params.txt", 'r') as f:
+            params = json.load(f)
+        return params
 
     def receive_thread(self):
         if self.simulate:
             while True:
-                _, string = self.sub_sock.recv_multipart()
+                _, msg = self.sub_sock.recv_multipart()
                 if self.verify:
-                    e
+                    #Split msg
+                    id_sender_bytes = msg.split(b"::")[0]
+                    id_sender_str = id_sender_bytes.decode()
+                    msg_string = msg.split(b"::")[1].decode()
+                    msg_h =sha256(msg.split(b"::")[1]).digest()
+                    signature = bytearray(msg.split(b"::")[2])
+                    signature[1] += 1
+                    # Init tsai with public KGC master key 
+                    self.tsai_verify.public_params_from_dict(self.get_kgc_params(self.KGC_repo[id_sender_str]))
+                    # Verify using repospublic key
+                    if self.tsai_verify.verify(msg_h, signature, id_sender_bytes, self.public_key_repo[id_sender_str]):
+                        logger.log(f"[{self.ID}]: Received signed message : {msg_string} from {id_sender_str}", logger.SUCCESS)
+                    else:
+                        logger.log(f"[{self.ID}]: Received UNsigned message : {msg_string} from {id_sender_str}", logger.FAIL)
+                        
                 else:
-                    print(f"[{self.ID}] recv msg : {string}")
+                    print(f"[{self.ID}] recv msg : {msg}")
 
     def start_recv_thread(self):
         threading.Thread(target=self.receive_thread).start()
