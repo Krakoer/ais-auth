@@ -2,6 +2,7 @@ from client import Client
 from KGC import KGC
 from zmqServer import ZMQserver
 import time
+import pyais
 
 if __name__ == "__main__":
     KGC_dict = {
@@ -37,14 +38,14 @@ if __name__ == "__main__":
 
     time.sleep(0.5)
 
-    client1.send(b"Coucou!")
+    data1 = {'msg_type': 1, 'repeat': 0, 'mmsi': 888888888, 'turn': 0.0, 'speed': 0.0, 'accuracy': False, 'lon': -122.345833, 'lat': 47.582833, 'course': 51.0, 'heading': 181, 'second': 15, 'maneuver': 0, 'spare_1': b'\x00', 'raim': False, 'radio': 149208}
+    msg = pyais.encode_dict(data1)[0].encode("ascii")
 
-    time.sleep(0.5)
+    client1.send(msg)
 
-    client2.send(b"Yooo!")
+    # time.sleep(0.5)
 
-    try:
-        while(1):
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        exit()
+    data2 = {'msg_type': 1, 'repeat': 0, 'mmsi': 444444444, 'turn': 0.0, 'speed': 0.0, 'accuracy': False, 'lon': -122.345833, 'lat': 47.582833, 'course': 51.0, 'heading': 181, 'second': 15, 'maneuver': 0, 'spare_1': b'\x00', 'raim': False, 'radio': 149208}
+    msg = pyais.encode_dict(data2)[0].encode("ascii")
+
+    client2.send(msg)

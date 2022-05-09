@@ -4,7 +4,7 @@ import sys
 import subprocess
 from hashlib import sha256
 import zmq
-from pyais.encode import encode_dict
+import pyais
 import threading
 import os
 import shutil
@@ -17,7 +17,8 @@ class Client:
         self.ID = ID
         self.ID_h = sha256(self.ID.encode("ascii")).hexdigest()
 
-        self.buffer = {}
+        self.buffer = {} # Buffer for msg
+        self.partial_buffer = [] # Buffer for multipart msg
 
         self.KGC_url_dict = KGC_url_dict
         self.KGC_server_url = KGC_url_dict[KGC_id]
@@ -27,11 +28,12 @@ class Client:
         self.tsai = TsaiUser(param_path)
         self.tsai_verify = TsaiUser(param_path)
 
+        self.time_threshold = 30 # Number of seconds to detect replay attack
 
         ## For now, repos are manually setup !
         self.public_key_repo = {
-            "888888888": {"Pid": "0308E7B3616335E365487E4A4682AC0B4D275BB33AD58ABC55FA992645D3EF914F7EC48DEB3B6D56E991B351350C4A0C98BBCF196C7000EAFCBF6505BF22807F7C", "Rid": "0252D7B4D39B6F3F9E2EFC639117C55F7EA69E3867800A6A7E1083B099E3B77A310143500C012AC5BC018AD88652ED4848C3DB309986C147F21ABD62597D56E03A"},
-            "444444444": {"Pid": "022A17F08B0782E8B3AF04A35022DF4D0323EE9EAD238CF4E6858EF11D2CC28147D221BA9E36811F60435B4F3B6C25AB692E8039FFBC47EDF583FEAAD7620EB970", "Rid": "0351D6CBB881239EC266DED4285669AE57515C77BE85F535A37D470C1B8E8BC5CB91069DE2B67CFDC3D1F4EA8920BEEBE9702D0F187E49CC878F3A1EF0A4E21A39"},
+            "888888888": {"Pid": "0355D6C5AA84F2B74984CEAD57F1E90CFF4CF67BDEC91A74B1C7444E678B139C72E762D4AC2135943C1D9BE1940A6CF17902DFF45033ABA094AC180C5812628204", "Rid": "029D8EC6185A26E403BEA13AC5C8EAEAAB1E9C62C8D54C5158DAE0891E6FB0D30EBFB8E0FE5CB4A832D0A315481F5BBA49EB87E8BB887106CD762AA823AFFD8FEA"},
+            "444444444": {"Pid": "0203F7B2AED023F3B24A35DF9A17A57E3B9A28F18EB3F74759EA144E8E0B14D31EAB665F0CF43B52603154BE0AEB69469D2DEFB0C01F6D4ED4E6C710DDE4CC73E6", "Rid": "0222F12A45BD9723E74B7248C0E2775A6627C426E953D22140D971706C2BE053541D27A8B8D1AFA9AA1C8DE28B06779B4F0B7F6DE2B06E42C0CC52FDA4F120F84A"},
         } # Keys : MMSIs, values : public keys
         self.KGC_repo = {
             "888888888": "KGC1",
@@ -49,7 +51,6 @@ class Client:
 
     def setupZMQ(self):
         self.id = int(self.ID_h[:3], 16)
-        print(f"{self.ID} has id {self.id}")
         self.topic = f"{self.id:04d}".encode("ascii")
         context = zmq.Context()
         self.push_sock = context.socket(zmq.PUSH)
@@ -61,7 +62,6 @@ class Client:
         for i in range(4096):
             if i != self.id:
                 if i == 2992 or i == 1675:
-                    print(f"{self.ID} sub to {i:04d}".encode("ascii"))
                     self.sub_sock.subscribe(f"{i:04d}".encode("ascii"))
         
     def setup_crypto(self):
@@ -143,14 +143,22 @@ class Client:
                 print(f"[{self.ID}]: Error while reading keys from file : {e}")
                 exit(1)
 
-    def send(self, message):
+    def send(self, message: bytes):
         if self.simulate:
             if self.auth:
-                # First we need to sign the message
-                signature = self.tsai.sign(sha256(message).digest())
-
-                msg = self.ID.encode("ascii")+b"::"+message+b"::"+signature
+                # First send the message
+                msg = message
                 self.push_sock.send_multipart([self.topic, msg])
+                
+                # Then we need to sign the message
+                timestamp = int(time.time()).to_bytes(4, 'little') # 32bits timestamp
+                signature = self.tsai.sign(sha256(message+timestamp).digest()) # Sign sha256(msg|timestamp)
+
+                signature_msg = signature+timestamp+sha256(message).digest()[:4] # Send sign|timestamp|msg_id
+                ais_signature = pyais.encode_dict({'type': 8, "mmsi": int(self.ID), "data": signature_msg})
+                for m in ais_signature:
+                    print(f"[{self.ID}]: sent \t{m}")
+                    self.push_sock.send_multipart([self.topic, m.encode('ascii')])
                 
             else:
                 self.push_sock.send_multipart([self.topic, message])
@@ -171,22 +179,62 @@ class Client:
         if self.simulate:
             while True:
                 _, msg = self.sub_sock.recv_multipart()
+
                 if self.verify:
-                    #Split msg
-                    id_sender_bytes = msg.split(b"::")[0]
-                    id_sender_str = id_sender_bytes.decode()
-                    msg_string = msg.split(b"::")[1].decode()
-                    msg_h =sha256(msg.split(b"::")[1]).digest()
-                    signature = bytearray(msg.split(b"::")[2])
-                    signature[1] += 1
-                    # Init tsai with public KGC master key 
-                    self.tsai_verify.public_params_from_dict(self.get_kgc_params(self.KGC_repo[id_sender_str]))
-                    # Verify using repospublic key
-                    if self.tsai_verify.verify(msg_h, signature, id_sender_bytes, self.public_key_repo[id_sender_str]):
-                        logger.log(f"[{self.ID}]: Received signed message : {msg_string} from {id_sender_str}", logger.SUCCESS)
-                    else:
-                        logger.log(f"[{self.ID}]: Received UNsigned message : {msg_string} from {id_sender_str}", logger.FAIL)
+                    # Get MMSI from message
+                    try:
+                        decoded = pyais.decode(msg).asdict()
+                    except Exception as e:
+                        if "Missing fragment" not in str(e):
+                            print(f"[{self.ID}]: Failed to decode AIS msg {msg}. Error : {e}")
+                            continue # If fail, go back to the while loop
+                        else:
+                            # If its a multipart msg
+                            self.partial_buffer.append(msg)
+                            print(f"[{self.ID}]: received \t{msg}")
+                            try: 
+                                # Try to decode multipart
+                                decoded = pyais.decode(*self.partial_buffer).asdict()
+                                # If success, empty partial buffer
+                                self.partial_buffer = []
+                            except:
+                                continue
+
+
+                    # If its a signature
+                    if decoded['msg_type'] == 8 and decoded['dac'] == 0 and decoded['fid'] == 0:
+                        recv_timestamp = int(time.time())
+                        signature = bytearray(decoded["data"])[0:65] #  sign|timestamp|id
+                        timestamp_b = bytearray(decoded["data"])[65:69] # 4 bytes timestamp (32bits)
+                        timestamp = int.from_bytes(timestamp_b, 'little')
+                        id_sender_str = str(decoded["mmsi"])
+                        id_sender_bytes = id_sender_str.encode("ascii")
+
+                        msg_id = int.from_bytes(bytearray(decoded["data"])[69:]+id_sender_bytes, 'little')
                         
+                        # Try to retreive msg from buffer
+                        if msg_id in self.buffer:
+                            # Check replay attack
+                            if timestamp <= recv_timestamp and recv_timestamp - timestamp < self.time_threshold:
+                                # Get message hash to verify and remove it from buffer
+                                msg_bytes = self.buffer.pop(msg_id)
+                                msg_h = sha256(msg_bytes+timestamp_b).digest()
+                                
+                                # Init tsai with public KGC master key 
+                                self.tsai_verify.public_params_from_dict(self.get_kgc_params(self.KGC_repo[id_sender_str]))
+                                # Verify using repospublic key
+                                if self.tsai_verify.verify(msg_h, signature, id_sender_bytes, self.public_key_repo[id_sender_str]):
+                                    logger.log(f"[{self.ID}]: Received signed message : {msg_bytes} from {id_sender_str}", logger.SUCCESS)
+                                else:
+                                    logger.log(f"[{self.ID}]: Received UNsigned message : {msg_bytes} from {id_sender_str}", logger.FAIL)
+                        else:
+                            print(f"[{self.ID}]: Got sign without msg")
+
+                    # If its a normal message
+                    else:
+                        id_sender_bytes = str(pyais.decode(msg).asdict()["mmsi"]).encode('ascii')
+                        msg_id = int.from_bytes(sha256(msg).digest()[:4]+id_sender_bytes, 'little')
+                        self.buffer[msg_id] = msg
                 else:
                     print(f"[{self.ID}] recv msg : {msg}")
 
