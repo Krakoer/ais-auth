@@ -196,11 +196,9 @@ class TsaiUser:
 
         h = sha256(identity+to_bytes(self.public_params.P1)+to_bytes(publickey.Rid)).digest()
         hid = Element.from_hash(self.pairing, Zr, h)
-        print(f"identoty from vrfy : {identity}")
 
         kid_h = sha256(message+to_bytes(publickey.Rid)+to_bytes(publickey.Pid)).digest()
         kid = Element.from_hash(self.pairing, Zr, kid_h)
-        print(f"kid from vrfy : {kid}")
         signP = Element(self.pairing, G1, (publickey.Rid + self.public_params.P*hid)*kid + publickey.Pid)
         signature = Element(self.pairing, G1, signature.hex())
 

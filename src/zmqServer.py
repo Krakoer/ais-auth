@@ -4,7 +4,7 @@ import time
 import random
 
 class ZMQserver(threading.Thread):
-    def __init__(self, port_pub, port_pull):
+    def __init__(self, port_pub, port_pull, debug=False):
         threading.Thread.__init__(self)
         self.port_pub = port_pub
         self.port_pull = port_pull
@@ -15,6 +15,7 @@ class ZMQserver(threading.Thread):
         self.pull_sock = context.socket(zmq.PULL)
         self.pull_sock.bind(f"tcp://*:{self.port_pull}")
         self.poller = zmq.Poller()
+        self.debug=debug
 
         self.poller.register(self.pull_sock, zmq.POLLIN)
 
@@ -23,5 +24,6 @@ class ZMQserver(threading.Thread):
             socks = dict(self.poller.poll())
             if self.pull_sock in socks:
                 _id, message = self.pull_sock.recv_multipart()
-                # print(f"Server received {message} from {_id}")
+                if self.debug:
+                    print(f"Server received {message} from {_id}")
                 self.pub_sock.send_multipart([_id, message])
