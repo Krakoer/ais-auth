@@ -4,3 +4,4 @@ pyzmq
 pyais
 bottle
 minilogger
+matplotlib

@@ -11,11 +11,11 @@ from minilogger import *
 import requests
 
 class KGC:
-    def __init__(self, ID, port, LO_url, debug=False):
+    def __init__(self, ID, port, LO_url, debug=False, param_path="a.param"):
         self.ID = ID
         self.port = port
         self.ID_h = sha256(ID.encode('ascii')).hexdigest()
-        self.tsai = TsaiKGC("a.param")
+        self.tsai = TsaiKGC(param_path)
         self.app = Bottle()
         self.LO_url = LO_url
         self._route() # From solution https://stackoverflow.com/a/16059246 to run multiple servers

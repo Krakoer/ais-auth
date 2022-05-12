@@ -12,9 +12,10 @@ import shutil
 from tsai import TsaiUser
 import time
 from minilogger import *
+import random
 
 class Client:
-    def __init__(self, ID, KGC_url, KGC_id, LO_url, auth=True, verify=True, simulate = True, param_path="a.param", debug=False):
+    def __init__(self, ID, KGC_url, KGC_id, LO_url, auth=True, verify=True, simulate = True, param_path="a.param", debug=False, cleanup=False):
         self.ID = ID
         self.ID_h = sha256(self.ID.encode("ascii")).hexdigest()
 
@@ -48,9 +49,13 @@ class Client:
     def _err(self, err):
         logger.log(f"[{self.ID}]: {err}", logger.FAIL)
     def _info(self, msg):
-        logger.log(f"[{self.ID}]; {msg}", logger.INFO)
+        logger.log(f"[{self.ID}]: {msg}", logger.INFO)
+    def _dbg(self, msg):
+        if self.debug:
+            self._info(msg)
 
     def setup(self):
+        self._dbg("Start setup")
         # Step 1 : try create our personal folder
         try:
             os.mkdir(self.ID_h)
@@ -60,14 +65,18 @@ class Client:
         # Step 2 : If simulate, setup ZMQ
         if self.simulate:
             self.setupZMQ()
+            self._dbg("ZMQ setup ok")
 
         # Step 3 : Update and save repos
         try:
             self.update_repos()
             self.save_repos()
+            self._dbg("Update repos ok")
         except ConnectionError:
+            self._dbg("Cannot connect to LO, trying to read from files")
             try:
                 self.load_repos()
+                self._dbg("Loaded repos from files ok")
             except Exception as e:
                 self._exit_err(f"Fail to load repo from file : {e}")
         except Exception as e:
@@ -76,6 +85,7 @@ class Client:
         # Step 4 : Init cryptosystem with out KGC public param
         try:
             self.tsai.public_params_from_dict(self.KGC_pk_repo[self.KGC_id])
+            self._dbg("Loaded KGC param local repo")
         except Exception as e:
             self._exit_err(f"Fail to init crypto with public params : {e}")
 
@@ -85,18 +95,27 @@ class Client:
                 public_key = json.load(f)
             with open(f"{self.ID_h}/private.key", "r") as f:
                 private_key = json.load(f)
+            self._dbg("Read keys from local files")
 
         # Step 5.b : if files not exist, register to KGC
         except FileNotFoundError:
+            self._dbg("Could not read keys from files, registering to KGC")
             res = requests.post(f"{self.KGC_server_url}/register", json={"user_id": self.ID})
             if res.status_code == 200:
                 partial_key = json.loads(res.content)
                 # Generate the private/public keys
                 public_key, private_key = self.tsai.generate_keys(partial_key["sid"], partial_key["Rid"])
+                # Save them to local files
+                with open(f"{self.ID_h}/public.key", "w") as f:
+                    json.dump(public_key, f)
+                with open(f"{self.ID_h}/private.key", "w") as f:
+                    json.dump(private_key, f)
                 # Finally, send our public key to the server
                 res = requests.post(f"{self.KGC_server_url}/send-pk", json={"user_id": self.ID, "public_key": public_key})
+
                 if res.status_code != 200:
                     self._exit_err(f"Fail to upload public key to KGC : {res.content.decode()}")
+                self._dbg("Registration ok")
         
         except Exception as e:
             self._exit_err(f"Fail to load keys from file : {e}")
@@ -114,19 +133,24 @@ class Client:
         '''
         Setup the ZMQ sockets and subscribe to all topic except ours
         '''
-        self.id = int(self.ID_h[:3], 16)
-        self.topic = f"{self.id:04d}".encode("ascii")
         context = zmq.Context()
         self.push_sock = context.socket(zmq.PUSH)
         self.sub_sock = context.socket(zmq.SUB)
         self.push_sock.connect(f"tcp://localhost:{4001}")
         self.sub_sock.connect(f"tcp://localhost:{4000}")
-        # if self.id == 2992: self.sub_sock.subscribe(f"{1675:04d}".encode("ascii"))
-        # if self.id == 1675: self.sub_sock.subscribe(f"{2992:04d}".encode("ascii"))
-        for i in range(4096):
-            if i != self.id:
-                if i == 2992 or i == 1675 or i==421:
-                    self.sub_sock.subscribe(f"{i:04d}".encode("ascii"))
+
+        msg = b""
+        while msg != b"OK":
+            # Chose a 4 bytes ID
+            self.topic = random.randbytes(4)
+            self._dbg(f"Chose topic {self.topic}")
+            # Subscribe to our channel
+            self.sub_sock.subscribe(self.topic)
+            self.push_sock.send_multipart([self.topic, b"CONNECT"])
+            _, msg = self.sub_sock.recv_multipart()
+            self._dbg(f"Received {msg} back from server")
+
+
 
     def update_repos(self):
         '''
@@ -333,5 +357,11 @@ class Client:
         threading.Thread(target=self.receive_thread).start()
 
     def __del__(self):
-        if self.debug:
-            self._info("Exiting")
+        self._dbg("Exiting")
+        if self.cleanup:
+            self.cleanup()
+    def cleanup(self):
+        try:
+            shutil.rmtree(self.ID_h)
+        except Exception as e:
+            self._exit_err(f"Fail cleanup: {e}")

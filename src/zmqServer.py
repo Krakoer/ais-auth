@@ -17,7 +17,28 @@ class ZMQserver(threading.Thread):
         self.poller = zmq.Poller()
         self.debug=debug
 
+        self.nb_bytes=0
+        self.measurements = {}
+        self.measuring=False
+        self.time_start = 0
+
         self.poller.register(self.pull_sock, zmq.POLLIN)
+        self.ids = []
+
+    def start_measurement(self):
+        self.nb_bytes=0
+        self.measuring = True
+        self.measurements = {}
+        self.time_start = time.time()
+
+    def stop_measurement(self):
+        self.measuring = False
+        m = self.measurements
+        q = self.nb_bytes
+        self.measurements={}
+        self.nb_bytes = 0
+        return m, q
+        
 
     def run(self):
         while True:
@@ -26,4 +47,20 @@ class ZMQserver(threading.Thread):
                 _id, message = self.pull_sock.recv_multipart()
                 if self.debug:
                     print(f"Server received {message} from {_id}")
-                self.pub_sock.send_multipart([_id, message])
+                if message == b"CONNECT":
+                    self.ids.append(_id)
+                    self.pub_sock.send_multipart([_id, b"OK"])
+                else:
+                    if self.measuring:
+                        self.nb_bytes += len(message)
+                        dt = int(time.time()-self.time_start)
+                        if not dt in self.measurements:
+                            self.measurements[dt] = len(message)
+                        else:
+                            self.measurements[dt] += len(message)
+
+                    for i in self.ids:
+                        if i != _id:
+                            if self.debug:
+                                print(f"[ZMQServ]: transmit to {i}")
+                            self.pub_sock.send_multipart([i, message])
