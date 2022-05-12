@@ -105,7 +105,7 @@ class KGC:
             abort(404, f"Error while registering : {e}")
     
     def _run(self):
-        self.app.run(host = "localhost", port=self.port)
+        self.app.run(host = "localhost", port=self.port, quiet=not self.debug)
 
     def run_server(self):
         threading.Thread(target=self._run).start()

@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import random
 
 if __name__ == "__main__":
+    debug = False
+
     KGC_dict = {
         "KGC1": "http://localhost:5000",
         "KGC2": "http://localhost:5001",
@@ -34,7 +36,7 @@ if __name__ == "__main__":
     time.sleep(1) # Time for KGCs to setup
 
     # Start ZMQ server for simulation
-    ZMQ_serv = ZMQserver(4000, 4001, debug=True)
+    ZMQ_serv = ZMQserver(4000, 4001, debug=debug)
     ZMQ_serv.start()
 
     ZMQ_serv.start_measurement()
@@ -44,7 +46,7 @@ if __name__ == "__main__":
     clients = []
     for mmsi in mmsis:
         KGC_id = ["KGC1", "KGC2", "KGC3"][mmsi%3]
-        new_client = Client(str(mmsi), KGC_dict[KGC_id], KGC_id, LO_url, debug=True, cleanup=True)
+        new_client = Client(str(mmsi), KGC_dict[KGC_id], KGC_id, LO_url, debug=debug, cleanup=True)
         new_client.setup()
         clients.append(new_client)
         time.sleep(0.1)
@@ -64,7 +66,7 @@ if __name__ == "__main__":
 
         time.sleep(0.5)
         client = random.choice(clients)
-        print(f"Sending : {client.ID}, {client.topic}")
+        print(f"Sending : {client.ID}")
         data1 = {'msg_type': 1, 'repeat': 0, 'mmsi': int(client.ID), 'turn': 0.0, 'speed': 0.0, 'accuracy': False, 'lon': (random.random()-0.5)*120, 'lat': (random.random()-0.5)*50, 'course': 51.0, 'heading': 181, 'second': 15, 'maneuver': 0, 'spare_1': b'\x00', 'raim': False, 'radio': 149208}
         msg = pyais.encode_dict(data1)[0].encode("ascii")
 
