@@ -14,10 +14,12 @@ import time
 from minilogger import *
 import random
 
-class Client:
-    def __init__(self, ID, KGC_url, KGC_id, LO_url, auth=True, verify=True, simulate = True, param_path="a.param", debug=False, cleanup=False):
+class EvilClient:
+    def __init__(self, ID, KGC_url, KGC_id, LO_url, target, auth=True, verify=True, simulate = True, param_path="a.param", debug=False, cleanup=False):
         self.ID = ID
         self.ID_h = sha256(self.ID.encode("ascii")).hexdigest()
+
+        self.target = target
 
         self.buffer = {} # Buffer for msg to verify
         self.fragment_buffer = [] # Buffer for multipart msg
@@ -223,7 +225,7 @@ class Client:
             signature = self.tsai.sign(sha256(message+timestamp).digest()) # Sign sha256(msg|timestamp)
 
             signature_msg = signature+timestamp+sha256(message).digest()[:4] # Send sign|timestamp|msg_id
-            ais_signature = pyais.encode_dict({'type': 8, "mmsi": int(self.ID), "data": signature_msg, "dac": 100, "fid": 0})
+            ais_signature = pyais.encode_dict({'type': 8, "mmsi": int(self.target), "data": signature_msg, "dac": 100, "fid": 0})
             for m in ais_signature:
                 self.send(m.encode('ascii'))
             
@@ -237,7 +239,7 @@ class Client:
             "dest_mmsi": target,
             "dac": 100,
             "fid": 1,
-            "data": b"\x00"
+            "data": b"\x00" # Must be here else pyais panics and create a big payload 
         }
         msg_ais = pyais.encode_dict(data)[0].encode('ascii')
         self.send(msg_ais)
@@ -246,7 +248,7 @@ class Client:
         # Send Pid the Rid
         data = {
             "type": 8,
-            "mmsi": self.ID,
+            "mmsi": self.target,
             "dac": 100,
             "fid": 2,
             "data": bytes.fromhex(self.public_key['Pid']),
@@ -256,7 +258,7 @@ class Client:
             self.send(m.encode("ascii"))
         data = {
             "type": 8,
-            "mmsi": self.ID,
+            "mmsi": self.target,
             "dac": 100,
             "fid": 3,
             "data": bytes.fromhex(self.public_key['Rid']),
@@ -325,7 +327,8 @@ class Client:
                             print(f"[{self.ID}]: Got sign without msg")
 
                     # If it's a public key request send the public key. It does not need to be signed !
-                    elif decoded['msg_type'] == 6 and decoded['dac'] == 100 and decoded['fid'] == 1 and str(decoded["dest_mmsi"]) == self.ID:
+                    # We're malicious so we're going to send our public key AHAHAHAHA
+                    elif decoded['msg_type'] == 6 and decoded['dac'] == 100 and decoded['fid'] == 1 and str(decoded["dest_mmsi"]) == self.target:
                         self.send_public_key()
 
                     # If it's a public key Pid we don't have yet

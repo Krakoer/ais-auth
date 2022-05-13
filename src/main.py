@@ -41,8 +41,7 @@ if __name__ == "__main__":
 
     ZMQ_serv.start_measurement()
 
-    # mmsis = [random.randint(111111111, 999999995) for i in range(8)]
-    mmsis = [111111111, 222222222, 333333333, ]
+    mmsis = [random.randint(111111111, 999999995) for i in range(10)]
     clients = []
     for mmsi in mmsis:
         KGC_id = ["KGC1", "KGC2", "KGC3"][mmsi%3]
@@ -60,21 +59,22 @@ if __name__ == "__main__":
     for c in clients:
         c.start_recv_thread()
 
-
-
     for i in range(20):
 
         time.sleep(0.5)
         client = random.choice(clients)
         print(f"Sending : {client.ID}")
-        data1 = {'msg_type': 1, 'repeat': 0, 'mmsi': int(client.ID), 'turn': 0.0, 'speed': 0.0, 'accuracy': False, 'lon': (random.random()-0.5)*120, 'lat': (random.random()-0.5)*50, 'course': 51.0, 'heading': 181, 'second': 15, 'maneuver': 0, 'spare_1': b'\x00', 'raim': False, 'radio': 149208}
+        data1 = {'msg_type': 1, 'repeat': 0, 'mmsi': int(client.ID)+1, 'turn': 0.0, 'speed': 0.0, 'accuracy': False, 'lon': (random.random()-0.5)*120, 'lat': (random.random()-0.5)*50, 'course': 51.0, 'heading': 181, 'second': 15, 'maneuver': 0, 'spare_1': b'\x00', 'raim': False, 'radio': 149208}
         msg = pyais.encode_dict(data1)[0].encode("ascii")
 
         client.send_message(msg)
     time.sleep(0.5)
 
-    m, q = ZMQ_serv.stop_measurement()
-    print(f"Total number of bytes sent : {q}")
-    plt.plot(list(m.keys()), list(m.values()))
-    plt.show()
-    exit()
+    for c in clients:
+        del c
+
+    # m, q = ZMQ_serv.stop_measurement()
+    # print(f"Total number of bytes sent : {q}")
+    # plt.plot(list(m.keys()), list(m.values()))
+    # plt.show()
+    # exit()
