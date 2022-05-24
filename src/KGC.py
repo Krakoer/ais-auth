@@ -5,14 +5,15 @@ from hashlib import sha256
 from tsai import TsaiKGC
 from bottle import route, run, abort, Bottle, request
 from bottle import debug as bottle_dbg
-import threading
+import multiprocessing as mp
 import shutil
 from minilogger import *
 import requests
 
 class KGC:
-    def __init__(self, ID, port, LO_url, debug=False, param_path="a.param"):
+    def __init__(self, ID, port, LO_url, debug=False, param_path="a.param", host="127.0.0.1"):
         self.ID = ID
+        self.host=host
         self.port = port
         self.ID_h = sha256(ID.encode('ascii')).hexdigest()
         self.tsai = TsaiKGC(param_path)
@@ -108,4 +109,13 @@ class KGC:
         self.app.run(host = "localhost", port=self.port, quiet=not self.debug)
 
     def run_server(self):
-        threading.Thread(target=self._run).start()
+        self.p = mp.Process(target=self._run, daemon=True)
+        self.p.start()
+
+    def close(self):
+        self.app.close()        
+        self.p.kill()
+        try:
+            shutil.rmtree(self.ID_h)
+        except:
+            pass

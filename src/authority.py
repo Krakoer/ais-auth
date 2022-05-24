@@ -3,8 +3,9 @@ import os
 import json
 from hashlib import sha256
 from bottle import route, run, abort, Bottle, request, response
-import threading
+import sys
 import shutil
+import multiprocessing as mp
 
 class Authority:
     def __init__(self, port, url = "127.0.0.1"):
@@ -59,7 +60,7 @@ class Authority:
         return self.KGC_public_key_repo
 
     def _run(self):
-        self.app.run(host = self.url, port=self.port, quiet=True)
+        self.app.run(host=self.url, port=self.port, quiet=True)
 
     def load_from_files(self):
         with open(self.repo_path+"KGC-pk", "r") as f:
@@ -86,7 +87,17 @@ class Authority:
             self.load_from_files()
         except:
             pass
-        threading.Thread(target=self._run).start()
+        self.p = mp.Process(target=self._run, daemon=True)
+        self.p.start()
+
+    def stop(self):
+        self.app.close()        
+        self.p.kill()
+        try:
+            shutil.rmtree("LO")
+        except:
+            pass
+
 
 if __name__ == "__main__":
     authority = Authority(1337)
