@@ -10,17 +10,16 @@ This repo is my work in progress about authenticating AIS using Certificateless 
 
 ## TODO
 
-- [ ] Send data over AIS (for now data is sent using ZMQ)
+- [x] Send data over AIS (for now data is sent using ZMQ)
 - [x] Create simulation mode (using ZMQ ?)
 - [x] Add timestamp and timestamp verification
 - [x] Add message-signature linkage
 - [x] Support multiple KGCs
-- [ ] Support batch signing of messages
 - [ ] Automatic registration of public key if signature is valid
-- [ ] Send public key every x time/messages
-- [ ] Replay scenario from AIS log
+- [x] Replay scenario from AIS log
 - [x] Add flexibility to support various schemes easily
 - [ ] Add a measurement system
+- [ ] Sign every x messages for type 1
 
 
 ## How it works

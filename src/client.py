@@ -13,48 +13,59 @@ from tsai import TsaiUser
 import time
 from minilogger import *
 import random
+from ais_serial import AISerial
 
 class Client:
-    def __init__(self, ID, KGC_url, KGC_id, LO_url, auth=True, verify=True, simulate = True, param_path="a.param", debug=False, cleanup=False):
-        self.ID = ID
-        self.ID_h = sha256(self.ID.encode("ascii")).hexdigest()
+    def __init__(self, mmsi, KGC_url, KGC_id, LO_url, auth=True, verify=True, simulate = True, param_path="a.param", debug=False, cleanup=False):
+        if type(mmsi) == int:
+            mmsi = str(mmsi)
+        assert(type(mmsi) == str)
+        self.mmsi = mmsi
+        self.ID_h = sha256(self.mmsi.encode("ascii")).hexdigest()
 
-        self.buffer = {} # Buffer for msg to verify
-        self.fragment_buffer = [] # Buffer for multipart msg
+        self.buffer = {}            # Buffer for msg to verify
+        self.fragment_buffer = []   # Buffer for multipart msg
 
         self.KGC_server_url = KGC_url
         self.KGC_id = KGC_id
         self.KGC_id_h = sha256(KGC_id.encode("ascii")).hexdigest()
         self.LO_url = LO_url
         
-        self.tsai = TsaiUser(param_path)
-        self.tsai_verify = TsaiUser(param_path)
-        self.public_key = {} 
+        self.tsai = TsaiUser(param_path)            # Crypto instance to sign
+        self.tsai_verify = TsaiUser(param_path)     # Crypto instance to verify
+        self.public_key = {}                        # Quick access to our public key when requested      
 
-        self.time_threshold = 30 # Number of seconds to detect replay attack
+        self.time_threshold = 30    # Number of seconds to detect replay attack
 
-        self.public_key_repo = {} # Keys : MMSIs, values : public keys
-        self.user_KGC_repo = {} # Keys : MMSIs, values : KGC id
-        self.KGC_pk_repo = {} # Keys : KGC_id, value : KGC public param
+        self.public_key_repo = {}   # Keys : MMSIs, values : public keys
+        self.user_KGC_repo = {}     # Keys : MMSIs, values : KGC id
+        self.KGC_pk_repo = {}       # Keys : KGC_id, value : KGC public param
 
-        self.auth = auth
-        self.verify = verify
-        self.simulate = simulate
+        self.auth = auth            # Should we sign messages ?
+        self.verify = verify        # Should we verify messages ?
+        self.simulate = simulate    # Radio com or ZMQ
+        if not self.simulate:
+            self.aiserial = AISerial()
 
         self.debug = debug
 
+
+    # To simplify debugging
     def _exit_err(self, err):
-        logger.log(f"[{self.ID}]: {err}. ABORTING", logger.FAIL)
+        logger.log(f"[{self.mmsi}]: {err}. ABORTING", logger.FAIL)
         exit(1)
     def _err(self, err):
-        logger.log(f"[{self.ID}]: {err}", logger.FAIL)
+        logger.log(f"[{self.mmsi}]: {err}", logger.FAIL)
     def _info(self, msg):
-        logger.log(f"[{self.ID}]: {msg}", logger.INFO)
+        logger.log(f"[{self.mmsi}]: {msg}", logger.INFO)
     def _dbg(self, msg):
         if self.debug:
             self._info(msg)
 
     def setup(self):
+        """
+        Function to setup the crypto, and eventually register to the KGC
+        """
         self._dbg("Start setup")
         # Step 1 : try create our personal folder
         try:
@@ -100,7 +111,7 @@ class Client:
         # Step 5.b : if files not exist, register to KGC
         except FileNotFoundError:
             self._dbg("Could not read keys from files, registering to KGC")
-            res = requests.post(f"{self.KGC_server_url}/register", json={"user_id": self.ID})
+            res = requests.post(f"{self.KGC_server_url}/register", json={"user_id": self.mmsi})
             if res.status_code == 200:
                 partial_key = json.loads(res.content)
                 # Generate the private/public keys
@@ -111,7 +122,7 @@ class Client:
                 with open(f"{self.ID_h}/private.key", "w") as f:
                     json.dump(private_key, f)
                 # Finally, send our public key to the server
-                res = requests.post(f"{self.KGC_server_url}/send-pk", json={"user_id": self.ID, "public_key": public_key})
+                res = requests.post(f"{self.KGC_server_url}/send-pk", json={"user_id": self.mmsi, "public_key": public_key})
 
                 if res.status_code != 200:
                     self._exit_err(f"Fail to upload public key to KGC : {res.content.decode()}")
@@ -131,7 +142,7 @@ class Client:
         
     def setupZMQ(self):
         '''
-        Setup the ZMQ sockets and subscribe to all topic except ours
+        Setup the ZMQ sockets and subscribe to our topic
         '''
         context = zmq.Context()
         self.push_sock = context.socket(zmq.PUSH)
@@ -144,12 +155,15 @@ class Client:
             # Chose a 4 bytes ID
             self.topic = random.randbytes(4)
             self._dbg(f"Chose topic {self.topic}")
-            # Subscribe to our channel
+            # Subscribe to our topic
             self.sub_sock.subscribe(self.topic)
-            time.sleep(0.1) 
-            self.push_sock.send_multipart([self.topic, b"CONNECT"])
+            time.sleep(0.1)
+            self.push_sock.send_multipart([self.topic, b"CONNECT"]) # Send connect request to ZMQ server
             _, msg = self.sub_sock.recv_multipart()
-            self._dbg(f"Received {msg} back from server")
+            if msg == b"OK":
+                self._dbg("Connection OK to ZMQ server")
+            else:
+                self._err("Fail to connect to ZMQ server")
 
 
 
@@ -209,150 +223,172 @@ class Client:
         with open(f"{self.ID_h}/KGC-pk-repo", "w") as f:
             self.KGC_pk_repo = json.load(f)
 
-    def send(self, message):
+    def send_dict(self, d):
+        """
+        Send a message from a dict, either via ZMQ or the SDR
+        """
         if self.simulate:
-            self.push_sock.send_multipart([self.topic, message])
+            messages = pyais.encode_dict(d)
+            for m in messages:
+                self.push_sock.send_multipart([self.topic, m.encode("ascii")])
+        else:
+            self.aiserial.send_phrase(d)
+    
+    def send_bytes(self, s):
+        """
+        Send a message from a phrase
+        """
+        if self.simulate:
+            self.push_sock.send_multipart([self.topic, s])
+        else:
+            data = pyais.decode(s).asdict()
+            self.aiserial.send_phrase(data)
         
     def send_message(self, message: bytes):
         if self.auth:
             # First send the message
-            msg = message
-            self.send(msg)
+            self.send_bytes(message)
             # Then we need to sign the message
             timestamp = int(time.time()).to_bytes(4, 'little') # 32bits timestamp
-            signature = self.tsai.sign(sha256(message+timestamp).digest()) # Sign sha256(msg|timestamp)
+            signature = self.tsai.sign(sha256(message[6:-2]+timestamp).digest()) # Sign sha256(msg|timestamp), we remove first 6 and 2 last (checksum) chars from msg cause when sending its !AIVDO and when receiving its !AIVDM so msg id will change 
 
-            signature_msg = signature+timestamp+sha256(message).digest()[:4] # Send sign|timestamp|msg_id
-            ais_signature = pyais.encode_dict({'type': 8, "mmsi": int(self.ID), "data": signature_msg, "dac": 100, "fid": 0})
-            for m in ais_signature:
-                self.send(m.encode('ascii'))
+            signature_msg = signature+timestamp+sha256(message[6:-2]).digest()[:4] # Send sign|timestamp|msg_id, we remove first 6 and 2 last (checksum) chars from msg cause when sending its !AIVDO and when receiving its !AIVDM so msg id will change 
+            ais_signature = self.send_dict({'msg_type': 8, "mmsi": int(self.mmsi), "data": signature_msg, "dac": 100, "fid": 0})
             
         else:
-            self.send(message)
+            self.send_bytes(message)
 
     def ask_public_key(self, target):
+        """
+        Send message 6 with dac = 100 and fid = 1
+        """
         data = {
             "type": 6,
-            "mmsi": self.ID,
+            "mmsi": self.mmsi,
             "dest_mmsi": target,
             "dac": 100,
             "fid": 1,
             "data": b"\x00"
         }
-        msg_ais = pyais.encode_dict(data)[0].encode('ascii')
-        self.send(msg_ais)
+        self.send_dict(msg_ais)
 
     def send_public_key(self):
-        # Send Pid the Rid
+        """
+        Send two message 8, with dac = 100 and fid = 2 for Pid and dac = 100, fid = 3 for Rid
+        """
         data = {
             "type": 8,
-            "mmsi": self.ID,
+            "mmsi": self.mmsi,
             "dac": 100,
             "fid": 2,
             "data": bytes.fromhex(self.public_key['Pid']),
         }
-        msgs_ais = pyais.encode_dict(data)
-        for m in msgs_ais:
-            self.send(m.encode("ascii"))
+        self.send_dict(data)
         data = {
             "type": 8,
-            "mmsi": self.ID,
+            "mmsi": self.mmsi,
             "dac": 100,
             "fid": 3,
             "data": bytes.fromhex(self.public_key['Rid']),
         }
-        msgs_ais = pyais.encode_dict(data)
-        for m in msgs_ais:
-            self.send(m.encode("ascii"))
+        self.send_dict(data)
 
     def receive_thread(self):
-        if self.simulate:
-            while True:
+        """
+        While true loop to receive and verify messages
+        """
+        while True:
+            if self.simulate:
                 _, msg = self.sub_sock.recv_multipart()
-                if self.verify:
-                    # Get MMSI from message
-                    try:
-                        decoded = pyais.decode(msg).asdict()
-                    except Exception as e:
-                        if "Missing fragment" not in str(e):
-                            print(f"[{self.ID}]: Failed to decode AIS msg {msg}. Error : {e}")
-                            continue # If fail, go back to the while loop
-                        else:
-                            # If its a multipart msg
-                            self.fragment_buffer.append(msg)
-                            try: 
-                                # Try to decode multipart
-                                decoded = pyais.decode(*self.fragment_buffer).asdict()
-                                # If success, empty partial buffer
-                                self.fragment_buffer = []
-                            except:
+            else:
+                msg = self.aiserial.receive_phrase()
+
+            msg = msg.strip()
+
+            if self.verify:
+                try:
+                    decoded = pyais.decode(msg).asdict()
+                except Exception as e:
+                    if "Missing fragment" not in str(e):
+                        print(f"[{self.mmsi}]: Failed to decode AIS msg {msg}. Error : {e}")
+                        continue # If fail, go back to the while loop
+                    else:
+                        # If its a multipart msg
+                        self.fragment_buffer.append(msg)
+                        try: 
+                            # Try to decode multipart
+                            decoded = pyais.decode(*self.fragment_buffer).asdict()
+                            # If success, empty partial buffer
+                            self.fragment_buffer = []
+                        except:
+                            continue
+
+
+                # If its a signature
+                if decoded['msg_type'] == 8 and decoded['dac'] == 100 and decoded['fid'] == 0:
+                    self._dbg(bytearray(decoded["data"]))
+                    recv_timestamp = int(time.time())
+                    signature = bytearray(decoded["data"])[0:65] #  sign|timestamp|id
+                    timestamp_b = bytearray(decoded["data"])[65:69] # 4 bytes timestamp (32bits)
+                    timestamp = int.from_bytes(timestamp_b, 'little')
+                    id_sender_str = str(decoded["mmsi"])
+                    id_sender_bytes = id_sender_str.encode("ascii")
+
+                    msg_id = int.from_bytes(bytearray(decoded["data"])[69:]+id_sender_bytes, 'little')
+                    
+                    # Try to retreive msg from buffer
+                    if msg_id in self.buffer:
+                        
+                        # Check replay attack
+                        if timestamp <= recv_timestamp and recv_timestamp - timestamp < self.time_threshold:
+                            # If we don't have the public key, ask for it
+                            if id_sender_str not in self.public_key_repo:
+                                self.ask_public_key(decoded["mmsi"])
                                 continue
 
-
-                    # If its a signature
-                    if decoded['msg_type'] == 8 and decoded['dac'] == 100 and decoded['fid'] == 0:
-                        recv_timestamp = int(time.time())
-                        signature = bytearray(decoded["data"])[0:65] #  sign|timestamp|id
-                        timestamp_b = bytearray(decoded["data"])[65:69] # 4 bytes timestamp (32bits)
-                        timestamp = int.from_bytes(timestamp_b, 'little')
-                        id_sender_str = str(decoded["mmsi"])
-                        id_sender_bytes = id_sender_str.encode("ascii")
-
-                        msg_id = int.from_bytes(bytearray(decoded["data"])[69:]+id_sender_bytes, 'little')
-                        
-                        # Try to retreive msg from buffer
-                        if msg_id in self.buffer:
+                            # Get message hash to verify and remove it from buffer
+                            msg_bytes = self.buffer.pop(msg_id)
+                            msg_h = sha256(msg_bytes[6:-2]+timestamp_b).digest()
                             
-                            # Check replay attack
-                            if timestamp <= recv_timestamp and recv_timestamp - timestamp < self.time_threshold:
-                                # If we don't have the public key, ask for it
-                                if id_sender_str not in self.public_key_repo:
-                                    self.ask_public_key(decoded["mmsi"])
-                                    continue
-
-                                # Get message hash to verify and remove it from buffer
-                                msg_bytes = self.buffer.pop(msg_id)
-                                msg_h = sha256(msg_bytes+timestamp_b).digest()
-                                
-                                # Init tsai with public KGC master key 
-                                self.tsai_verify.public_params_from_dict(self.KGC_pk_repo[self.user_KGC_repo[id_sender_str]])
-                                # Verify using repospublic key
-                                if self.tsai_verify.verify(msg_h, signature, id_sender_bytes, self.public_key_repo[id_sender_str]):
-                                    logger.log(f"[{self.ID}]: Received signed message : {msg_bytes} from {id_sender_str}", logger.SUCCESS)
-                                else:
-                                    logger.log(f"[{self.ID}]: Received UNsigned message : {msg_bytes} from {id_sender_str}", logger.FAIL)
-                        else:
-                            print(f"[{self.ID}]: Got sign without msg")
-
-                    # If it's a public key request send the public key. It does not need to be signed !
-                    elif decoded['msg_type'] == 6 and decoded['dac'] == 100 and decoded['fid'] == 1 and str(decoded["dest_mmsi"]) == self.ID:
-                        self.send_public_key()
-
-                    # If it's a public key Pid we don't have yet
-                    elif decoded["msg_type"] == 8 and decoded["dac"] == 100 and decoded["fid"] == 2:
-                        # If we don't have public key or Pid
-                        mmsi_str = str(decoded["mmsi"])
-                        if mmsi_str not in self.public_key_repo:
-                            self.public_key_repo[mmsi_str] = {}
-                        if "Pid" not in self.public_key_repo[mmsi_str]:
-                            self.public_key_repo[mmsi_str]["Pid"] = decoded["data"].hex()
-
-                    # If it's a public key Pid we don't have yet
-                    elif decoded["msg_type"] == 8 and decoded["dac"] == 100 and decoded["fid"] == 3:
-                        # If we don't have public key or Pid
-                        mmsi_str = str(decoded["mmsi"])
-                        if mmsi_str not in self.public_key_repo:
-                            self.public_key_repo[mmsi_str] = {}
-                        if "Rid" not in self.public_key_repo[mmsi_str]:
-                            self.public_key_repo[mmsi_str]["Rid"] = decoded["data"].hex()
-
-                    # If its a normal message
+                            # Init tsai with public KGC master key 
+                            self.tsai_verify.public_params_from_dict(self.KGC_pk_repo[self.user_KGC_repo[id_sender_str]])
+                            # Verify using repospublic key
+                            if self.tsai_verify.verify(msg_h, signature, id_sender_bytes, self.public_key_repo[id_sender_str]):
+                                logger.log(f"[{self.mmsi}]: Received signed message : {msg_bytes} from {id_sender_str}", logger.SUCCESS)
+                            else:
+                                logger.log(f"[{self.mmsi}]: Received UNsigned message : {msg_bytes} from {id_sender_str}", logger.FAIL)
                     else:
-                        id_sender_bytes = str(pyais.decode(msg).asdict()["mmsi"]).encode('ascii')
-                        msg_id = int.from_bytes(sha256(msg).digest()[:4]+id_sender_bytes, 'little')
-                        self.buffer[msg_id] = msg
+                        self._info("Got sign without msg")
+
+                # If it's a public key request send the public key. It does not need to be signed !
+                elif decoded['msg_type'] == 6 and decoded['dac'] == 100 and decoded['fid'] == 1 and str(decoded["dest_mmsi"]) == self.mmsi:
+                    self.send_public_key()
+
+                # If it's a public key Pid we don't have yet
+                elif decoded["msg_type"] == 8 and decoded["dac"] == 100 and decoded["fid"] == 2:
+                    # If we don't have public key or Pid
+                    mmsi_str = str(decoded["mmsi"])
+                    if mmsi_str not in self.public_key_repo:
+                        self.public_key_repo[mmsi_str] = {}
+                    if "Pid" not in self.public_key_repo[mmsi_str]:
+                        self.public_key_repo[mmsi_str]["Pid"] = decoded["data"].hex()
+
+                # If it's a public key Pid we don't have yet
+                elif decoded["msg_type"] == 8 and decoded["dac"] == 100 and decoded["fid"] == 3:
+                    # If we don't have public key or Pid
+                    mmsi_str = str(decoded["mmsi"])
+                    if mmsi_str not in self.public_key_repo:
+                        self.public_key_repo[mmsi_str] = {}
+                    if "Rid" not in self.public_key_repo[mmsi_str]:
+                        self.public_key_repo[mmsi_str]["Rid"] = decoded["data"].hex()
+
+                # If its a normal message
                 else:
-                    print(f"[{self.ID}] recv msg : {msg}")
+                    id_sender_bytes = str(pyais.decode(msg).asdict()["mmsi"]).encode('ascii')
+                    msg_id = int.from_bytes(sha256(msg[6:-2]).digest()[:4]+id_sender_bytes, 'little') # Remove the first 6 chars cause when sending its !AIVDO and when receiving its !AIVDM, so id will change
+                    self.buffer[msg_id] = msg
+            else:
+                print(f"[{self.mmsi}] recv msg : {msg}")
 
     def start_recv_thread(self):
         threading.Thread(target=self.receive_thread, daemon=True).start()

@@ -9,10 +9,10 @@ class ZMQserver(threading.Thread):
         self.port_pub = port_pub
         self.port_pull = port_pull
 
-        context = zmq.Context()
-        self.pub_sock = context.socket(zmq.PUB)
+        self.context = zmq.Context()
+        self.pub_sock = self.context.socket(zmq.PUB)
         self.pub_sock.bind(f"tcp://*:{self.port_pub}")
-        self.pull_sock = context.socket(zmq.PULL)
+        self.pull_sock = self.context.socket(zmq.PULL)
         self.pull_sock.bind(f"tcp://*:{self.port_pull}")
         self.poller = zmq.Poller()
         self.debug=debug
@@ -25,6 +25,8 @@ class ZMQserver(threading.Thread):
         self.poller.register(self.pull_sock, zmq.POLLIN)
         self.ids = []
 
+        self.running = False
+
     def start_measurement(self):
         self.nb_bytes=0
         self.measuring = True
@@ -32,17 +34,21 @@ class ZMQserver(threading.Thread):
         self.time_start = time.time()
 
     def stop_measurement(self):
+        """
+        Returns a dict with following measurements:
+            - 
+        """
         self.measuring = False
         m = self.measurements
-        q = self.nb_bytes
         self.measurements={}
-        self.nb_bytes = 0
-        return m, q
+        self.running = False
+        return m
         
 
     def run(self):
-        while True:
-            socks = dict(self.poller.poll())
+        self.running=True
+        while self.running:
+            socks = dict(self.poller.poll(timeout=100))
             if self.pull_sock in socks:
                 _id, message = self.pull_sock.recv_multipart()
                 if self.debug:
@@ -64,3 +70,4 @@ class ZMQserver(threading.Thread):
                             if self.debug:
                                 print(f"[ZMQServ]: transmit to {i}")
                             self.pub_sock.send_multipart([i, message])
+        self.context.destroy()

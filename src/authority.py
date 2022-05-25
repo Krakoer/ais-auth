@@ -8,24 +8,30 @@ import shutil
 import multiprocessing as mp
 
 class Authority:
+    """
+    Class wich simulates the Leading Authority
+    """
     def __init__(self, port, url = "127.0.0.1"):
         self.url = url
         self.port = port
-        self.app = Bottle()
-        self._route() # From solution https://stackoverflow.com/a/16059246 to run multiple servers
-        self.KGC_public_key_repo = {}
-        self.KGC_user_repo = {}
-        self.user_public_key_repo = {}
-        self.repo_path = "./LO-files/"
+        self.app = Bottle()                 
+        self._route()                       # From solution https://stackoverflow.com/a/16059246 to run multiple servers
+        self.KGC_public_key_repo = {}       # Store public keys of KGCs
+        self.KGC_user_repo = {}             # Store public keys of users
+        self.user_public_key_repo = {}      # Store which user is registered to which KGC
+        self.repo_path = "./LO-files/"      # Local repo
 
     def _route(self):
-        self.app.route("/user-pk-repo", callback=self._user_pk)
-        self.app.route("/user-KGC-repo", callback=self._KGC_user)
-        self.app.route("/KGC-pk-repo", callback=self._KGC_pk)
-        self.app.route("/register-user", callback = self._reg_user, method="POST")
-        self.app.route("/register-KGC", callback=self._reg_kgc, method="POST")
+        self.app.route("/user-pk-repo", callback=self._user_pk)                     # Get user pk
+        self.app.route("/user-KGC-repo", callback=self._KGC_user)                   # Get KGC pk
+        self.app.route("/KGC-pk-repo", callback=self._KGC_pk)                       # Get KGC user
+        self.app.route("/register-user", callback = self._reg_user, method="POST")  # Post register user
+        self.app.route("/register-KGC", callback=self._reg_kgc, method="POST")      # Post register KGC
     
     def _reg_user(self):
+        """
+        Callback for user registration
+        """
         try:
             data = request.json
             user_id = data["user_id"]
@@ -94,11 +100,6 @@ class Authority:
         self.app.close()        
         self.p.kill()
         try:
-            shutil.rmtree("LO")
+            shutil.rmtree(self.repo_path)
         except:
             pass
-
-
-if __name__ == "__main__":
-    authority = Authority(1337)
-    authority.run_server()

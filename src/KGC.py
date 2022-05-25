@@ -112,7 +112,7 @@ class KGC:
         self.p = mp.Process(target=self._run, daemon=True)
         self.p.start()
 
-    def close(self):
+    def stop(self):
         self.app.close()        
         self.p.kill()
         try:
