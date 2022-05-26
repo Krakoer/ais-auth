@@ -16,7 +16,7 @@ import random
 from ais_serial import AISerial
 
 class Client:
-    def __init__(self, mmsi, KGC_url, KGC_id, LO_url, auth=True, verify=True, simulate = True, param_path="a.param", debug=False, cleanup=False):
+    def __init__(self, mmsi, KGC_url, KGC_id, LO_url, auth=True, verify=True, simulate = True, param_path="a.param", debug=False, cleanup=False, dont_listen=False, sign_every=10):
         if type(mmsi) == int:
             mmsi = str(mmsi)
         assert(type(mmsi) == str)
@@ -45,9 +45,13 @@ class Client:
         self.verify = verify        # Should we verify messages ?
         self.simulate = simulate    # Radio com or ZMQ
         if not self.simulate:
-            self.aiserial = AISerial()
+            self.aiserial = AISerial(dont_listen=dont_listen)
 
         self.debug = debug
+        self.sign_every = sign_every    # Sign every x type1 messages
+        self.not_signed = sign_every    # How many messages we sent without a signature (initialize to sign_every so the first message will be signed)
+
+        self.authenticated = {}         # When receiving an auth type 1, the mmsi gets automatically authenticated during 5 minutes
 
 
     # To simplify debugging
@@ -245,7 +249,11 @@ class Client:
             self.aiserial.send_phrase(data)
         
     def send_message(self, message: bytes):
-        if self.auth:
+        msg_type = pyais.decode(message).asdict()["msg_type"]
+        # if we need to authenticate, and either it's a type 1 msg that needs auth or another message type
+        if self.auth and ((self.not_signed >= self.sign_every and msg_type == 1) or msg_type != 1) :
+            # reset not signed
+            self.not_signed = 0
             # First send the message
             self.send_bytes(message)
             # Then we need to sign the message
@@ -254,9 +262,12 @@ class Client:
 
             signature_msg = signature+timestamp+sha256(message[6:-2]).digest()[:4] # Send sign|timestamp|msg_id, we remove first 6 and 2 last (checksum) chars from msg cause when sending its !AIVDO and when receiving its !AIVDM so msg id will change 
             ais_signature = self.send_dict({'msg_type': 8, "mmsi": int(self.mmsi), "data": signature_msg, "dac": 100, "fid": 0})
-            
-        else:
-            self.send_bytes(message)
+            return
+        # If we send an unsigned message and it's type one
+        elif self.auth and self.not_signed < self.sign_every and msg_type == 1:
+            self.not_signed += 1
+
+        self.send_bytes(message)
 
     def ask_public_key(self, target):
         """
@@ -293,6 +304,13 @@ class Client:
         }
         self.send_dict(data)
 
+    def accept_msg(self, message):
+        mmsi = pyais.decode(message).asdict()["mmsi"]
+        logger.log(f"[{self.mmsi}]: Received signed message : {message} from {mmsi}", logger.SUCCESS)
+    def reject_msg(self, message):
+        mmsi = pyais.decode(message).asdict()["mmsi"]
+        logger.log(f"[{self.mmsi}]: Received UNsigned message : {message} from {mmsi}", logger.FAIL)
+
     def receive_thread(self):
         """
         While true loop to receive and verify messages
@@ -322,11 +340,16 @@ class Client:
                             self.fragment_buffer = []
                         except:
                             continue
-
+                # If its a type one, automatically accept if authenticated
+                if decoded["msg_type"] == 1 and decoded["mmsi"] in self.authenticated:
+                    # Check that auth was less than 5 minutes ago
+                    if abs(self.authenticated[decoded["mmsi"]] - time.time()) <= 5*60:
+                        self.accept_msg(msg) # If it's the case we accept the message. Later in the thread it will be stored in the buffer and if it's signed it will be accepted twice. Not a big deal
+                    else:
+                        self.authenticated.pop(decoded["mmsi"]) # If it's been more than 5 mn since last auth, proceed as normal (store in buffer and wait for signature)
 
                 # If its a signature
                 if decoded['msg_type'] == 8 and decoded['dac'] == 100 and decoded['fid'] == 0:
-                    self._dbg(bytearray(decoded["data"]))
                     recv_timestamp = int(time.time())
                     signature = bytearray(decoded["data"])[0:65] #  sign|timestamp|id
                     timestamp_b = bytearray(decoded["data"])[65:69] # 4 bytes timestamp (32bits)
@@ -354,9 +377,12 @@ class Client:
                             self.tsai_verify.public_params_from_dict(self.KGC_pk_repo[self.user_KGC_repo[id_sender_str]])
                             # Verify using repospublic key
                             if self.tsai_verify.verify(msg_h, signature, id_sender_bytes, self.public_key_repo[id_sender_str]):
-                                logger.log(f"[{self.mmsi}]: Received signed message : {msg_bytes} from {id_sender_str}", logger.SUCCESS)
+                                # If we got an auth message 1, auth the mmsi for 5 minutes
+                                if pyais.decode(msg_bytes).asdict()["msg_type"] == 1:
+                                    self.authenticated[pyais.decode(msg_bytes).asdict()["mmsi"]] = time.time()
+                                self.accept_msg(msg_bytes)
                             else:
-                                logger.log(f"[{self.mmsi}]: Received UNsigned message : {msg_bytes} from {id_sender_str}", logger.FAIL)
+                                self.reject_msg(msg_bytes)
                     else:
                         self._info("Got sign without msg")
 
@@ -394,7 +420,7 @@ class Client:
         threading.Thread(target=self.receive_thread, daemon=True).start()
 
     def __del__(self):
-        self._dbg("Exiting")
+        œ("Exiting")
         if self.cleanup:
             self.cleanup()
     def cleanup(self):

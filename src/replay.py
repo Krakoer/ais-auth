@@ -98,4 +98,3 @@ def replay_file(file_path, auth = True, nb_kgc=5):
 if __name__ == "__main__":
     auth_m = replay_file("test_short.log")
     no_auth_m = replay_file("test_short.log", auth=False)
-

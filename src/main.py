@@ -69,9 +69,6 @@ if __name__ == "__main__":
         client.send_message(msg)
     time.sleep(0.5)
 
-    for c in clients:
-        del c
-
     # m, q = ZMQ_serv.stop_measurement()
     # print(f"Total number of bytes sent : {q}")
     # plt.plot(list(m.keys()), list(m.values()))
