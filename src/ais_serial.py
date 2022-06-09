@@ -15,7 +15,7 @@ class AISerial:
                 )
         if retransmit:
             self.serial_retransmit = serial.Serial(
-                port="/dev/ttyUSB1", baudrate=38400, bytesize=8, stopbits=serial.STOPBITS_ONE
+                port="/dev/ttyUSB1", baudrate=9600, bytesize=8, stopbits=serial.STOPBITS_ONE
             )
 
     def receive_phrase(self):
