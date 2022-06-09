@@ -420,7 +420,7 @@ class Client:
         threading.Thread(target=self.receive_thread, daemon=True).start()
 
     def __del__(self):
-        œ("Exiting")
+        self.info("Exiting")
         if self.cleanup:
             self.cleanup()
     def cleanup(self):
