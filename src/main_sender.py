@@ -18,12 +18,17 @@ if __name__ == "__main__":
     client.setup()
     client.update_repos()
 
+    print("Parsing file...")
+    with open("../ais_attack.txt") as f:
+        ais_messages = list(pyais.encode_dict(pyais.decode(line.strip()).asdict())[0].encode('ascii') for line in f.readlines() if line.strip())
+
     input("Press ENTER when ready to start")
 
-    while True:
-        data1 = {'msg_type': 1, 'repeat': 0, 'mmsi': mmsi, 'turn': 0.0, 'speed': 0.0, 'accuracy': False, 'lon':45.35, 'lat': -73.40, 'course': 51.0, 'heading': 181, 'second': 15, 'maneuver': 0, 'spare_1': b'\x00', 'raim': False, 'radio': 149208}
-        client.send_message(pyais.encode_dict(data1)[0].encode("ascii"))
-        time.sleep(1)
+    for m in ais_messages:
+        # data1 = {'msg_type': 1, 'repeat': 0, 'mmsi': mmsi, 'turn': 0.0, 'speed': 0.0, 'accuracy': False, 'lon':45.35, 'lat': -73.40, 'course': 51.0, 'heading': 181, 'second': 15, 'maneuver': 0, 'spare_1': b'\x00', 'raim': False, 'radio': 149208}
+        # client.send_message(pyais.encode_dict(data1)[0].encode("ascii"))
+        client.send_message(m)
+        time.sleep(0.5)
 
     while True:
         time.sleep(0.5)
