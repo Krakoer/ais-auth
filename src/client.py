@@ -262,7 +262,7 @@ class Client:
             # Then we need to sign the message
             timestamp = int(time.time()).to_bytes(4, 'little') # 32bits timestamp
             signature = self.tsai.sign(sha256(message[6:-2]+timestamp).digest()) # Sign sha256(msg|timestamp), we remove first 6 and 2 last (checksum) chars from msg cause when sending its !AIVDO and when receiving its !AIVDM so msg id will change 
-            self._dbg(f"Signing {message} with id {int.from_bytes(sha256(message[6:-2]).digest()[:4], 'little')}")
+            self._dbg(f"Signing {message} with id {sha256(message[6:-2]).digest()[:4]}")
             signature_msg = signature+timestamp+sha256(message[6:-2]).digest()[:4] # Send sign|timestamp|msg_id, we remove first 6 and 2 last (checksum) chars from msg cause when sending its !AIVDO and when receiving its !AIVDM so msg id will change 
             ais_signature = self.send_dict({'msg_type': 8, "mmsi": int(self.mmsi), "data": signature_msg, "dac": 100, "fid": 0})
             return
@@ -320,6 +320,7 @@ class Client:
         """
         While true loop to receive and verify messages
         """
+        self._dbg("Starting recv thread")
         while True:
             if self.simulate:
                 _, msg = self.sub_sock.recv_multipart()
