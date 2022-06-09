@@ -18,7 +18,7 @@ if __name__ == "__main__":
     client.setup()
     client.update_repos()
 
-    time.sleep(10)
+    input("Press ENTER when ready to start")
 
     while True:
         data1 = {'msg_type': 1, 'repeat': 0, 'mmsi': mmsi, 'turn': 0.0, 'speed': 0.0, 'accuracy': False, 'lon':45.35, 'lat': -73.40, 'course': 51.0, 'heading': 181, 'second': 15, 'maneuver': 0, 'spare_1': b'\x00', 'raim': False, 'radio': 149208}

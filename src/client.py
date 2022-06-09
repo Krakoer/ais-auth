@@ -326,6 +326,7 @@ class Client:
                 msg = self.aiserial.receive_phrase()
 
             msg = msg.strip()
+            self._dbg(msg)
 
             if self.verify:
                 try:
@@ -421,6 +422,8 @@ class Client:
                     except:
                         continue
             else:
+                if self.retransmit:
+                    self.aiserial.retransmit(message)
                 print(f"[{self.mmsi}] recv msg : {msg}")
 
     def start_recv_thread(self):
