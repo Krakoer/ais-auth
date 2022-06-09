@@ -414,9 +414,12 @@ class Client:
 
                 # If its a normal message
                 else:
-                    id_sender_bytes = str(pyais.decode(msg).asdict()["mmsi"]).encode('ascii')
-                    msg_id = int.from_bytes(sha256(msg[6:-2]).digest()[:4]+id_sender_bytes, 'little') # Remove the first 6 chars cause when sending its !AIVDO and when receiving its !AIVDM, so id will change
-                    self.buffer[msg_id] = msg
+                    try:
+                        id_sender_bytes = str(pyais.decode(msg).asdict()["mmsi"]).encode('ascii')
+                        msg_id = int.from_bytes(sha256(msg[6:-2]).digest()[:4]+id_sender_bytes, 'little') # Remove the first 6 chars cause when sending its !AIVDO and when receiving its !AIVDM, so id will change
+                        self.buffer[msg_id] = msg
+                    except:
+                        continue
             else:
                 print(f"[{self.mmsi}] recv msg : {msg}")
 
