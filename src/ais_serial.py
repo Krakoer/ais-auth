@@ -8,11 +8,15 @@ class AISerial:
     Class for handling serial com for input, and SDR output
     The don't listen argument is to prevent the creation of multiple serial port
     """
-    def __init__(self, dont_listen=False):
+    def __init__(self, dont_listen=False, retransmit=False):
         if not dont_listen:
             self.serial_port = serial.Serial(
                     port="/dev/ttyUSB0", baudrate=38400, bytesize=8, timeout=2, stopbits=serial.STOPBITS_ONE
                 )
+        if retransmit:
+            self.serial_retransmit = serial.Serial(
+                port="/dev/ttyUSB1", baudrate=38400, bytesize=8, stopbits=serial.STOPBITS_ONE
+            )
 
     def receive_phrase(self):
         """
@@ -36,4 +40,7 @@ class AISerial:
         Accept a dict with keys msg_type or type, and specific info for each type
         """
         string = encode_message(d)
-        asyncio.run(self.send_async(string))
+        asyncio.run(self._send_async(string))
+
+    def retransmit(self, msg):
+        self.serial_retransmit.write(msg)

@@ -16,7 +16,7 @@ import random
 from ais_serial import AISerial
 
 class Client:
-    def __init__(self, mmsi, KGC_url, KGC_id, LO_url, auth=True, verify=True, simulate = True, param_path="a.param", debug=False, cleanup=False, dont_listen=False, sign_every=10):
+    def __init__(self, mmsi, KGC_url, KGC_id, LO_url, auth=True, verify=True, simulate = True, param_path="a.param", debug=False, cleanup=False, dont_listen=False, sign_every=10, retransmit=False):
         if type(mmsi) == int:
             mmsi = str(mmsi)
         assert(type(mmsi) == str)
@@ -44,8 +44,9 @@ class Client:
         self.auth = auth            # Should we sign messages ?
         self.verify = verify        # Should we verify messages ?
         self.simulate = simulate    # Radio com or ZMQ
+        self.retransmit = retransmit
         if not self.simulate:
-            self.aiserial = AISerial(dont_listen=dont_listen)
+            self.aiserial = AISerial(dont_listen=dont_listen, retransmit=retransmit)
 
         self.debug = debug
         self.sign_every = sign_every    # Sign every x type1 messages
@@ -249,6 +250,7 @@ class Client:
             self.aiserial.send_phrase(data)
         
     def send_message(self, message: bytes):
+        self._dbg(f"Sending {message}")
         msg_type = pyais.decode(message).asdict()["msg_type"]
         # if we need to authenticate, and either it's a type 1 msg that needs auth or another message type
         if self.auth and ((self.not_signed >= self.sign_every and msg_type == 1) or msg_type != 1) :
@@ -307,6 +309,8 @@ class Client:
     def accept_msg(self, message):
         mmsi = pyais.decode(message).asdict()["mmsi"]
         logger.log(f"[{self.mmsi}]: Received signed message : {message} from {mmsi}", logger.SUCCESS)
+        if self.retransmit:
+            self.aiserial.retransmit(message)
     def reject_msg(self, message):
         mmsi = pyais.decode(message).asdict()["mmsi"]
         logger.log(f"[{self.mmsi}]: Received UNsigned message : {message} from {mmsi}", logger.FAIL)
@@ -420,7 +424,7 @@ class Client:
         threading.Thread(target=self.receive_thread, daemon=True).start()
 
     def __del__(self):
-        self.info("Exiting")
+        self._info("Exiting")
         if self.cleanup:
             self.cleanup()
     def cleanup(self):
