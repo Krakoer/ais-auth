@@ -390,6 +390,8 @@ class Client:
                             else:
                                 self.reject_msg(msg_bytes)
                     else:
+                        self._dbg(f"sha256 of signature : {bytearray(decoded['data'])[69:]}")
+                        self._dbg(f"id sender bytes of signature : {id_sender_bytes}")
                         self._info(f"Got sign without msg : id was {msg_id}")
 
                 # If it's a public key request send the public key. It does not need to be signed !
@@ -418,6 +420,8 @@ class Client:
                 else:
                     try:
                         id_sender_bytes = str(pyais.decode(msg).asdict()["mmsi"]).encode('ascii')
+                        self._dbg(f"id sender byte : {id_sender_bytes}")
+                        self._dbg(f"sha256 : {sha256(msg[6:-2]).digest()[:4]}")
                         msg_id = int.from_bytes(sha256(msg[6:-2]).digest()[:4]+id_sender_bytes, 'little') # Remove the first 6 chars cause when sending its !AIVDO and when receiving its !AIVDM, so id will change
                         self._dbg(f"Putting {msg} in {msg_id}")
                         self.buffer[msg_id] = msg
