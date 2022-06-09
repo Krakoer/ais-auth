@@ -106,7 +106,7 @@ class KGC:
             abort(404, f"Error while registering : {e}")
     
     def _run(self):
-        self.app.run(host = "localhost", port=self.port, quiet=not self.debug)
+        self.app.run(host = self.host, port=self.port, quiet=not self.debug)
 
     def run_server(self):
         self.p = mp.Process(target=self._run, daemon=True)

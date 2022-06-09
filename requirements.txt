@@ -7,3 +7,6 @@ minilogger
 matplotlib
 bitstring
 pycryptodome
+requests
+websockets
+pyserial
