@@ -16,7 +16,7 @@ import random
 from ais_serial import AISerial
 
 class Client:
-    def __init__(self, mmsi, KGC_url, KGC_id, LO_url, auth=True, verify=True, simulate = True, param_path="a.param", debug=False, cleanup=False, dont_listen=False, sign_every=10, retransmit=False):
+    def __init__(self, mmsi, KGC_url, KGC_id, LO_url, auth=True, verify=True, simulate = True, param_path="a.param", debug=False, cleanup=False, dont_listen=False, sign_every=10, retransmit=False, flag_unauth=False):
         if type(mmsi) == int:
             mmsi = str(mmsi)
         assert(type(mmsi) == str)
@@ -45,6 +45,7 @@ class Client:
         self.verify = verify        # Should we verify messages ?
         self.simulate = simulate    # Radio com or ZMQ
         self.retransmit = retransmit
+        self.flag_unauth = flag_unauth
         if not self.simulate:
             self.aiserial = AISerial(dont_listen=dont_listen, retransmit=retransmit)
 
@@ -66,6 +67,38 @@ class Client:
     def _dbg(self, msg):
         if self.debug:
             self._info(msg)
+
+    def _is_auth(self, mmsi):
+        """
+        returns true if a user is auth since less than 5 minutes, otherwise false and remove user from authenticate buffer
+        """
+        if mmsi in self.authenticated:
+            auth_time = self.authenticated[mmsi]
+            # Check timing
+            if time.time() >= auth_time and abs(time.time() - auth_time) <= 5*60:
+                return True
+            self.authenticated.pop(mmsi)
+
+        return False
+        
+
+    def _garbage_collector_thread(self):
+        # Every 1 second, check if messages have no signature for more than 10 seconds and sends them with [UNAUTH] flag
+        while True:
+            for msg_id, msg_dict in self.buffer.items():
+                if time.time() - msg_dict["time"] >= 10: # If the message hanged there for more than 10 seconds without auth
+                    # If user is auth drop it, otherwise send with flag
+                    decoded = pyais.decode(msg_dict["msg"]).asdict()
+                    if decoded["msg_type"] == 1 and self._is_auth(decoded["mmsi"]):
+                        self.buffer.drop(msg_id)
+                    else:
+                        msg_5 = pyais.encode_dict({"msg_type":5, "mmsi": decoded["mmsi"], "shipname":"[UNAUTH]"})
+                        if self.retransmit and not self.simulate:
+                            for m in msg_5:
+                                self.aiserial.retransmit(m)
+
+
+            time.sleep(1)
 
     def setup(self):
         """
@@ -142,6 +175,10 @@ class Client:
             self.public_key = public_key
         except Exception as e:
             self._exit_err(f"Fail to set crypto user keys : {e}")
+
+        # Step 7 : If we want to flag the unauth msgs, run the thread
+        if self.verify and self.retransmit and self.flag_unauth:
+            threading.Thread(target=self._garbage_collector_thread, daemon=True)
 
         # We're done !
         
@@ -348,12 +385,8 @@ class Client:
                         except:
                             continue
                 # If its a type one, automatically accept if authenticated
-                if decoded["msg_type"] == 1 and decoded["mmsi"] in self.authenticated:
-                    # Check that auth was less than 5 minutes ago
-                    if abs(self.authenticated[decoded["mmsi"]] - time.time()) <= 5*60:
-                        self.accept_msg(msg) # If it's the case we accept the message. Later in the thread it will be stored in the buffer and if it's signed it will be accepted twice. Not a big deal
-                    else:
-                        self.authenticated.pop(decoded["mmsi"]) # If it's been more than 5 mn since last auth, proceed as normal (store in buffer and wait for signature)
+                if decoded["msg_type"] == 1 and self._is_auth(decoded["mmsi"]):
+                    self.accept_msg(msg) # If it's the case we accept the message. Later in the thread it will be stored in the buffer and if it's signed it will be accepted twice. Not a big deal
 
                 # If its a signature
                 if decoded['msg_type'] == 8 and decoded['dac'] == 100 and decoded['fid'] == 0:
@@ -377,7 +410,7 @@ class Client:
                                 continue
 
                             # Get message hash to verify and remove it from buffer
-                            msg_bytes = self.buffer.pop(msg_id)
+                            msg_bytes = self.buffer.pop(msg_id)["msg"]
                             msg_h = sha256(msg_bytes[6:-2]+timestamp_b).digest()
                             
                             # Init tsai with public KGC master key 
@@ -425,12 +458,12 @@ class Client:
                         self._dbg(f"sha256 : {sha256(msg[6:-2]).digest()[:4]}")
                         msg_id = int.from_bytes(sha256(msg[6:-2]).digest()[:4]+id_sender_bytes, 'little') # Remove the first 6 chars cause when sending its !AIVDO and when receiving its !AIVDM, so id will change
                         self._dbg(f"Putting {msg} in {msg_id}")
-                        self.buffer[msg_id] = msg
+                        self.buffer[msg_id] = {"msg":msg, "time": int(time.time())}
                     except:
                         continue
             else:
                 if self.retransmit:
-                    self.aiserial.retransmit(message)
+                    self.aiserial.retransmit(msg)
                 print(f"[{self.mmsi}] recv msg : {msg}")
 
     def start_recv_thread(self):
