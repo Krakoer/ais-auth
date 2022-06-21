@@ -96,6 +96,7 @@ class Client:
                         if self.retransmit and not self.simulate:
                             for m in msg_5:
                                 self.aiserial.retransmit(m)
+                        self.aiserial.retransmit(msg_dict["msg"])
 
 
             time.sleep(1)
