@@ -9,28 +9,18 @@ import pyais
 
 if __name__=="__main__":
     debug = True
-    LO = Authority(6000)
-    LO_url = "http://127.0.0.1:6000"
+    LO = Authority()
+    LO_url = "http://127.0.0.1:3000"
     LO.run_server()
-
-    time.sleep(0.5)
-
-    KGC1 = KGC("KGC1", 5000, LO_url)
-    KGC2 = KGC("KGC2", 5001, LO_url)
-
-    KGC1.setup()
-    KGC2.setup()
-    KGC1.run_server()
-    KGC2.run_server()
 
     time.sleep(0.5)
 
     ZMQ_serv = ZMQserver(4000, 4001)
     ZMQ_serv.start()
 
-    c1 = Client("111111111", "http://127.0.0.1:5000", "KGC1", LO_url, debug=debug)
-    c2 = Client("222222222", "http://127.0.0.1:5001", "KGC2", LO_url, debug=debug)
-    c_evil = EvilClient("333333333", "http://127.0.0.1:5001", "KGC2", LO_url, target="222222222", debug=debug)
+    c1 = Client("111111111", LO_url, debug=debug)
+    c2 = Client("222222222", LO_url, debug=debug)
+    c_evil = EvilClient("333333333", LO_url, target="222222222", debug=debug)
 
     c1.setup()
     c2.setup()

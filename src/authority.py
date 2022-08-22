@@ -6,64 +6,98 @@ from bottle import route, run, abort, Bottle, request, response
 import sys
 import shutil
 import multiprocessing as mp
+from tsai import TsaiKGC
 
 class Authority:
     """
-    Class wich simulates the Leading Authority
+    Class wich simulates the Leading Authority as a KGC
     """
-    def __init__(self, port, url = "127.0.0.1"):
+    def __init__(self, port = 3000, url = "127.0.0.1"):
         self.url = url
         self.port = port
         self.app = Bottle()                 
         self._route()                       # From solution https://stackoverflow.com/a/16059246 to run multiple servers
-        self.KGC_public_key_repo = {}       # Store public keys of KGCs
-        self.KGC_user_repo = {}             # Store public keys of users
-        self.user_public_key_repo = {}      # Store which user is registered to which KGC
-        self.repo_path = "./LO-files/"      # Local repo
+        self.user_repo = {}                 # Store public keys of users
+        self.revocation = []                # Revocation repo
+        self.repo_path = "./LO-files/"      # Local repo to store everything
+        self.tsai = TsaiKGC(param_path)
+
+        self.setup()
+
+    def setup(self):
+        try:
+            os.mkdir(self.repo_path)
+        except FileExistsError:
+            pass
+
+        # First, try to read public params and private key from file 
+        try:
+            with open(f"{self.repo_path}/params.txt", 'r') as f:
+                public_params = json.load(f)
+            self.tsai.set_public_params(public_params)
+
+            with open(f"{self.repo_path}/private.key", 'r') as f:
+                key = json.load(f)
+            self.tsai.set_private_key(key)
+
+        except FileNotFoundError:
+            # If not found, we generate them
+            public_params, private_key = self.tsai.master_keygen()
+            with open(f"{self.repo_path}/params.txt", 'w') as f:
+                json.dump(public_params, f)
+
+            with open(f"{self.repo_path}/private.key", 'w') as f:
+                json.dump(private_key, f)
+
+        except Exception as e:
+            self._exit_err(f"Failed to load/generate Master keys : {e}. ABORTING")
 
     def _route(self):
-        self.app.route("/user-pk-repo", callback=self._user_pk)                     # Get user pk
-        self.app.route("/user-KGC-repo", callback=self._KGC_user)                   # Get KGC pk
-        self.app.route("/KGC-pk-repo", callback=self._KGC_pk)                       # Get KGC user
-        self.app.route("/register-user", callback = self._reg_user, method="POST")  # Post register user
-        self.app.route("/register-KGC", callback=self._reg_kgc, method="POST")      # Post register KGC
-    
-    def _reg_user(self):
-        """
-        Callback for user registration
-        """
-        try:
-            data = request.json
-            user_id = data["user_id"]
-            KGC_id = data["KGC_id"]
-            publick_key = data["public_key"]
-            self.KGC_user_repo[user_id] = KGC_id
-            self.user_public_key_repo[user_id] = publick_key
-            self.save_repos()
-            return "Registration successful"
-            
-        except Exception as e:
-            abort(code=500, text=f"An error occured: {e}")
-
-    def _reg_kgc(self):
-        try:
-            data = request.json
-            KGC_id = data["KGC_id"]
-            pk = data["public_key"]
-            self.KGC_public_key_repo[KGC_id] = pk
-            self.save_repos()
-            return "Registration successful"
-        except Exception as e:
-            abort(text=f"Fail to registr KGC : {e}")
+        self.app.route("/user-pk", callback=self._user_pk)                          # Get user pk
+        self.app.route("/revocated", callback=self._revocated)                      # Get revocated pk
+        self.app.route("/params", callback=self._params)                            # Get KGC params
+        self.app.route("/register", callback = self._register, method="POST")       # Post register user
+        self.app.route("/send-pk", callback = self._send_pk, method="POST")         # Post user pk once generated
 
     def _user_pk(self):
         return self.user_public_key_repo
 
-    def _KGC_user(self):
-        return self.KGC_user_repo
+    def _revocated(self):
+        return self.revocation
 
-    def _KGC_pk(self):
-        return self.KGC_public_key_repo
+    def _params(self):
+        try:
+            with open(f"{self.repo_path}/params.txt", 'r') as f:
+                params = json.load(f)
+            return params
+        except e:
+            self._err(f"Error while fetching public params : {e}")
+            abort(404, "Error while fetching public params")
+    
+    def _register(self):
+        """
+        Callback for user registration
+        """
+        try:
+            _id = request.json["user_id"]
+            if type(_id) == str:
+                _id = _id.encode("ascii")
+            assert type(_id) == bytes, "id must be bytes for registration"
+            keys = self.tsai.partial_keygen(_id)
+            return keys
+        except Exception as e:
+            abort(404, f"Error while registering : {e}")
+
+    def _send_pk(self):
+        try:
+            data = request.json
+            user_id = data["user_id"]
+            pk = data["public_key"]
+            self.user_repo[user_id] = pk
+            self.save_repos()
+            return "Registration successful"
+        except Exception as e:
+            abort(f"Fail to register : {e}")
 
     def _run(self):
         self.app.run(host=self.url, port=self.port, quiet=True)

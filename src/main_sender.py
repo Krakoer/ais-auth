@@ -10,16 +10,15 @@ import random
 if __name__ == "__main__":
     debug = True
 
-    KGC_url = "http://92.222.82.236:5000"
-    authority_url = "http://92.222.82.236:6000"
+    authority_url = "http://92.222.82.236:3000"
 
     mmsi_attack = 316011550
-    client_attack = Client(str(mmsi_attack), KGC_url, "KGC_CANADA", authority_url, debug=debug, cleanup=True, simulate=False, dont_listen=True, auth=False)
+    client_attack = Client(str(mmsi_attack), authority_url, debug=debug, cleanup=True, simulate=False, dont_listen=True, auth=False)
     client_attack.setup()
     client_attack.update_repos()
 
     mmsi_gentil = 123456789
-    client_gentil = Client(str(mmsi_gentil), KGC_url, "KGC_CANADA", authority_url, debug=debug, cleanup=True, simulate=False, dont_listen=True, auth=True)
+    client_gentil = Client(str(mmsi_gentil), authority_url, debug=debug, cleanup=True, simulate=False, dont_listen=True, auth=True)
     client_gentil.setup()
     client_gentil.update_repos()
 

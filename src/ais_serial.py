@@ -10,10 +10,12 @@ class AISerial:
     """
     def __init__(self, dont_listen=False, retransmit=False):
         if not dont_listen:
+            # Setup connection to AIS receiver
             self.serial_port = serial.Serial(
                     port="/dev/ttyUSB0", baudrate=38400, bytesize=8, timeout=2, stopbits=serial.STOPBITS_ONE
                 )
         if retransmit:
+            # Setup connection to ECDIS
             self.serial_retransmit = serial.Serial(
                 port="/dev/ttyUSB1", baudrate=9600, bytesize=8, stopbits=serial.STOPBITS_ONE
             )

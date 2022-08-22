@@ -3,11 +3,10 @@ import time
 
 if __name__=="__main__":
     debug = True
-    KGC_url = "http://92.222.82.236:5001"
-    auhtority_url = "http://92.222.82.236:6000"
+    auhtority_url = "http://92.222.82.236:3000"
 
     mmsi = 338427627
-    client = Client(mmsi, KGC_url, "KGC_USA", auhtority_url, simulate=False, debug=debug, cleanup=True, retransmit=True)
+    client = Client(mmsi, auhtority_url, simulate=False, debug=debug, cleanup=True, retransmit=True)
 
     client.setup()
     client.update_repos()

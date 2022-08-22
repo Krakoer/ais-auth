@@ -16,7 +16,7 @@ import random
 from ais_serial import AISerial
 
 class Client:
-    def __init__(self, mmsi, KGC_url, KGC_id, LO_url, auth=True, verify=True, simulate = True, param_path="a.param", debug=False, cleanup=False, dont_listen=False, sign_every=10, retransmit=False, flag_unauth=False):
+    def __init__(self, mmsi, LO_url, auth=True, verify=True, simulate = True, param_path="a.param", debug=False, cleanup=False, dont_listen=False, sign_every=10, retransmit=False, flag_unauth=False):
         if type(mmsi) == int:
             mmsi = str(mmsi)
         assert(type(mmsi) == str)
@@ -26,26 +26,22 @@ class Client:
         self.buffer = {}            # Buffer for msg to verify
         self.fragment_buffer = []   # Buffer for multipart msg
 
-        self.KGC_server_url = KGC_url
-        self.KGC_id = KGC_id
-        self.KGC_id_h = sha256(KGC_id.encode("ascii")).hexdigest()
         self.LO_url = LO_url
         
         self.tsai = TsaiUser(param_path)            # Crypto instance to sign
-        self.tsai_verify = TsaiUser(param_path)     # Crypto instance to verify
         self.public_key = {}                        # Quick access to our public key when requested      
 
         self.time_threshold = 30    # Number of seconds to detect replay attack
 
         self.public_key_repo = {}   # Keys : MMSIs, values : public keys
-        self.user_KGC_repo = {}     # Keys : MMSIs, values : KGC id
-        self.KGC_pk_repo = {}       # Keys : KGC_id, value : KGC public param
+        self.revocation_repo = []   
+        self.public_params = {}     # Public parameters of KGC
 
-        self.auth = auth            # Should we sign messages ?
-        self.verify = verify        # Should we verify messages ?
-        self.simulate = simulate    # Radio com or ZMQ
-        self.retransmit = retransmit
-        self.flag_unauth = flag_unauth
+        self.auth = auth                # Should we sign messages ?
+        self.verify = verify            # Should we verify messages ?
+        self.simulate = simulate        # Radio com or ZMQ
+        self.retransmit = retransmit    # Should we retransmit accepted messages ?
+        self.flag_unauth = flag_unauth  # Should we flag unauth messages or just drop them ?
         if not self.simulate:
             self.aiserial = AISerial(dont_listen=dont_listen, retransmit=retransmit)
 
@@ -53,7 +49,9 @@ class Client:
         self.sign_every = sign_every    # Sign every x type1 messages
         self.not_signed = sign_every    # How many messages we sent without a signature (initialize to sign_every so the first message will be signed)
 
-        self.authenticated = {}         # When receiving an auth type 1, the mmsi gets automatically authenticated during 5 minutes
+        self.non_critical = [1, 2, 3, 4, 5, 15, 17, 18, 19, 20, 24]
+        self.authenticated = {}         # When receiving an authenticated non critical message, the mmsi gets automatically authenticated for sign_every non critical messages
+                                        # authenticated[mmsi] contains the number of unauthenticated non critical messages received from the last authenticated non critical message
 
 
     # To simplify debugging
@@ -70,12 +68,11 @@ class Client:
 
     def _is_auth(self, mmsi):
         """
-        returns true if a user is auth since less than 5 minutes, otherwise false and remove user from authenticate buffer
+        returns true if a user is auth since less than sign_every non critical messages, otherwise false and remove user from authenticate buffer
         """
         if mmsi in self.authenticated:
-            auth_time = self.authenticated[mmsi]
-            # Check timing
-            if time.time() >= auth_time and abs(time.time() - auth_time) <= 5*60:
+            unsigned = self.authenticated[mmsi]
+            if unsigned <= sign_every:
                 return True
             self.authenticated.pop(mmsi)
 
@@ -89,7 +86,7 @@ class Client:
                 if time.time() - msg_dict["time"] >= 10: # If the message hanged there for more than 10 seconds without auth
                     # If user is auth drop it, otherwise send with flag
                     decoded = pyais.decode(msg_dict["msg"]).asdict()
-                    if decoded["msg_type"] == 1 and self._is_auth(decoded["mmsi"]):
+                    if decoded["msg_type"] in self.non_critical and self._is_auth(decoded["mmsi"]):
                         self.buffer.drop(msg_id)
                     else:
                         msg_5 = pyais.encode_dict({"msg_type":5, "mmsi": decoded["mmsi"], "shipname":"[UNAUTH]"})
@@ -117,7 +114,7 @@ class Client:
             self.setupZMQ()
             self._dbg("ZMQ setup ok")
 
-        # Step 3 : Update and save repos
+        # Step 3 : Update and save repos 
         try:
             self.update_repos()
             self.save_repos()
@@ -132,9 +129,17 @@ class Client:
         except Exception as e:
             self._exit_err(f"Fail to update and save repos : {e}")
         
-        # Step 4 : Init cryptosystem with out KGC public param
+        # Step 4 : Init cryptosystem with KGC public param
+
         try:
-            self.tsai.public_params_from_dict(self.KGC_pk_repo[self.KGC_id])
+            res = requests.get(f"{self.LO_url}/params")
+            if res.status_code == 200:
+                data = json.loads(res.content.decode())
+                self.public_params = data
+        except Exception as e:
+            self._exit_err(f"Fail to fetch public params : {e}")
+        try:
+            self.tsai.public_params_from_dict(self.public_params)
             self._dbg("Loaded KGC param local repo")
         except Exception as e:
             self._exit_err(f"Fail to init crypto with public params : {e}")
@@ -147,10 +152,10 @@ class Client:
                 private_key = json.load(f)
             self._dbg("Read keys from local files")
 
-        # Step 5.b : if files not exist, register to KGC
+        # Step 5.b : if files not exist, register to OL
         except FileNotFoundError:
             self._dbg("Could not read keys from files, registering to KGC")
-            res = requests.post(f"{self.KGC_server_url}/register", json={"user_id": self.mmsi})
+            res = requests.post(f"{self.LO_url}/register", json={"user_id": self.mmsi})
             if res.status_code == 200:
                 partial_key = json.loads(res.content)
                 # Generate the private/public keys
@@ -161,7 +166,7 @@ class Client:
                 with open(f"{self.ID_h}/private.key", "w") as f:
                     json.dump(private_key, f)
                 # Finally, send our public key to the server
-                res = requests.post(f"{self.KGC_server_url}/send-pk", json={"user_id": self.mmsi, "public_key": public_key})
+                res = requests.post(f"{self.LO_url}/send-pk", json={"user_id": self.mmsi, "public_key": public_key})
 
                 if res.status_code != 200:
                     self._exit_err(f"Fail to upload public key to KGC : {res.content.decode()}")
@@ -212,11 +217,11 @@ class Client:
 
     def update_repos(self):
         '''
-        Fetch the three repos from LO server
+        Fetch the two repos from LO server
         '''
         try:
             # User public keys
-            res = requests.get(f"{self.LO_url}/user-pk-repo")
+            res = requests.get(f"{self.LO_url}/user-pk")
             if res.status_code == 200:
                 data = json.loads(res.content.decode())
                 self.public_key_repo = data
@@ -224,36 +229,26 @@ class Client:
             else:
                 self._err("Error while fetching user pk repo from LO")
 
-            # KGC public keys
-            res = requests.get(f"{self.LO_url}/KGC-pk-repo")
+            # Revocated keys
+            res = requests.get(f"{self.LO_url}/revocated")
             if res.status_code == 200:
                 data = json.loads(res.content.decode())
-                self.KGC_pk_repo = data
+                self.revocation_repo = data
             else:
-                self._err("Error while fetching KGC pk repo from LO")
+                self._err("Error while fetching user pk repo from LO")
 
-            # user KGC repo
-            res = requests.get(f"{self.LO_url}/user-KGC-repo")
-            if res.status_code == 200:
-                data = json.loads(res.content.decode())
-                self.user_KGC_repo = data
-                ## TODO Add verification that slef.KGC_id == self.user_kgc_repo[self.ID]
-            else:
-                self._err("Error while fetching user KGC repo from LO")
         except Exception as e:
             self._err(f"Error while updating repos: {e}")
-        
 
     def save_repos(self):
         '''
-        Save the 3 repos to the <ID_h> folder
+        Save the 2 repos to the <ID_h> folder
         '''
         with open(f"{self.ID_h}/public-key-repo", "w") as f:
             json.dump(self.public_key_repo, f)
-        with open(f"{self.ID_h}/user-kgc-repo", "w") as f:
-            json.dump(self.user_KGC_repo, f)
-        with open(f"{self.ID_h}/KGC-pk-repo", "w") as f:
-            json.dump(self.KGC_pk_repo, f)
+        with open(f"{self.ID_h}/revocation-repo", "w") as f:
+            json.dump(self.revocation_repo, f)
+
 
     def load_repos(self):
         '''
@@ -261,10 +256,9 @@ class Client:
         '''
         with open(f"{self.ID_h}/public-key-repo", "w") as f:
             self.public_key_repo = json.load(f)
-        with open(f"{self.ID_h}/user-kgc-repo", "w") as f:
-            self.user_KGC_repo = json.load(f)
-        with open(f"{self.ID_h}/KGC-pk-repo", "w") as f:
-            self.KGC_pk_repo = json.load(f)
+        with open(f"{self.ID_h}/revocation-repo", "w") as f:
+            self.revocation_repo = json.load(f)
+
 
     def send_dict(self, d):
         """
@@ -290,8 +284,8 @@ class Client:
     def send_message(self, message: bytes):
         self._dbg(f"Sending {message}")
         msg_type = pyais.decode(message).asdict()["msg_type"]
-        # if we need to authenticate, and either it's a type 1 msg that needs auth or another message type
-        if self.auth and ((self.not_signed >= self.sign_every and msg_type == 1) or msg_type != 1) :
+        # if we need to authenticate, and either it's a non critical msg that needs auth or another message type
+        if self.auth and ((self.not_signed >= self.sign_every and msg_type in self.non_critical) or msg_type not in self.non_critical) :
             # reset not signed
             self.not_signed = 0
             # First send the message
@@ -305,7 +299,7 @@ class Client:
             ais_signature = self.send_dict({'msg_type': 8, "mmsi": int(self.mmsi), "data": signature_msg, "dac": 100, "fid": 0})
             return
         # If we send an unsigned message and it's type one
-        elif self.auth and self.not_signed < self.sign_every and msg_type == 1:
+        elif self.auth and self.not_signed < self.sign_every and msg_type in self.non_critical:
             self.not_signed += 1
 
         self.send_bytes(message)
@@ -385,9 +379,10 @@ class Client:
                             self.fragment_buffer = []
                         except:
                             continue
-                # If its a type one, automatically accept if authenticated
-                if decoded["msg_type"] == 1 and self._is_auth(decoded["mmsi"]):
-                    self.accept_msg(msg) # If it's the case we accept the message. Later in the thread it will be stored in the buffer and if it's signed it will be accepted twice. Not a big deal
+                # If its a non critical, automatically accept if authenticated
+                if decoded["msg_type"] in self.non_critical and self._is_auth(decoded["mmsi"]):
+                    self.accept_msg(msg)
+                    self.authenticated[decoded["mmsi"]] += 1
 
                 # If its a signature
                 if decoded['msg_type'] == 8 and decoded['dac'] == 100 and decoded['fid'] == 0:
@@ -409,18 +404,19 @@ class Client:
                             if id_sender_str not in self.public_key_repo:
                                 self.ask_public_key(decoded["mmsi"])
                                 continue
+                            if self.public_key_repo[id_sender_str] in self.revocation_repo:
+                                self._err("Got msg from revocated key")
+                                self.reject_msg(msg_bytes)
 
                             # Get message hash to verify and remove it from buffer
                             msg_bytes = self.buffer.pop(msg_id)["msg"]
                             msg_h = sha256(msg_bytes[6:-2]+timestamp_b).digest()
-                            
-                            # Init tsai with public KGC master key 
-                            self.tsai_verify.public_params_from_dict(self.KGC_pk_repo[self.user_KGC_repo[id_sender_str]])
+
                             # Verify using repospublic key
-                            if self.tsai_verify.verify(msg_h, signature, id_sender_bytes, self.public_key_repo[id_sender_str]):
-                                # If we got an auth message 1, auth the mmsi for 5 minutes
-                                if pyais.decode(msg_bytes).asdict()["msg_type"] == 1:
-                                    self.authenticated[pyais.decode(msg_bytes).asdict()["mmsi"]] = time.time()
+                            if self.tsai.verify(msg_h, signature, id_sender_bytes, self.public_key_repo[id_sender_str]):
+                                # If we got an authenticated non critical msg, auth the mmsi for sign_every non critical messages
+                                if pyais.decode(msg_bytes).asdict()["msg_type"] in self.non_critical:
+                                    self.authenticated[pyais.decode(msg_bytes).asdict()["mmsi"]] = 0
                                 self.accept_msg(msg_bytes)
                             else:
                                 self.reject_msg(msg_bytes)
