@@ -1,0 +1,25 @@
+title Phase d'enregistrement
+
+participant "Utilisateur" as user
+participant "Organisation Intermédiaire" as OI
+participant "Organisation Leader" as OL
+
+participant user
+
+user->OI:Demande d'enregistrement
+box over user,OI: Vérification d'identité
+
+OI->OL: Enregistrement MMSI
+box over OL:Vérification doublon
+OL <--> user: Mise en place de 2FA
+
+
+OL-> user: clé partielle
+
+
+box over user:Calcul clés\nprivée et publique
+
+user -> OL:clé publique
+
+
+box over OL:Mise à jour\nrépertoire

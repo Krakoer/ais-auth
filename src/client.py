@@ -442,7 +442,7 @@ class Client:
                     if "Pid" not in self.public_key_repo[mmsi_str]:
                         self.public_key_repo[mmsi_str]["Pid"] = decoded["data"].hex()
 
-                # If it's a public key Pid we don't have yet
+                # If it's a public key Rid we don't have yet
                 elif decoded["msg_type"] == 8 and decoded["dac"] == 100 and decoded["fid"] == 3:
                     # If we don't have public key or Pid
                     mmsi_str = str(decoded["mmsi"])
