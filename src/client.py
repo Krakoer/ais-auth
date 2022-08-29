@@ -351,6 +351,11 @@ class Client:
     def reject_msg(self, message):
         mmsi = pyais.decode(message).asdict()["mmsi"]
         logger.log(f"[{self.mmsi}]: Received UNsigned message : {message} from {mmsi}", logger.FAIL)
+        if self.flag_unauth:
+            msg_5 = pyais.encode_dict({"msg_type":5, "mmsi": decoded["mmsi"], "shipname":"[UNAUTH]", "callsign": "HIB"}, talker="AIVDM")
+            if self.retransmit and not self.simulate:
+                for m in msg_5:
+                    self.aiserial.retransmit(m.encode("ascii"))
 
     def receive_thread(self):
         """
