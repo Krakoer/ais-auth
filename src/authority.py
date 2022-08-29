@@ -104,20 +104,16 @@ class Authority:
         self.app.run(host=self.url, port=self.port, quiet=True)
 
     def load_from_files(self):
-        with open(self.repo_path+"KGC-pk", "r") as f:
-            self.KGC_public_key_repo = json.load(f)
         with open(self.repo_path+"user-pk", "r") as f:
             self.user_public_key_repo = json.load(f)
-        with open(self.repo_path+"user-KGC", "r") as f:
-            self.KGC_user_repo = json.load(f)
+        with open(self.repo_path+"revocation", "r") as f:
+            self.revocation = json.load(f)
 
     def save_repos(self):
-        with open(self.repo_path+"KGC-pk", "w") as f:
-            json.dump(self.KGC_public_key_repo, f)
         with open(self.repo_path+"user-pk", "w") as f:
             json.dump(self.user_public_key_repo, f)
-        with open(self.repo_path+"user-KGC", "w") as f:
-            json.dump(self.KGC_user_repo, f)
+        with open(self.repo_path+"revocation", "w") as f:
+            json.dump(self.revocation, f)
 
     def run_server(self):
         try:
@@ -138,3 +134,14 @@ class Authority:
             shutil.rmtree(self.repo_path)
         except:
             pass
+
+    def _exit_err(self, err):
+        logger.log(f"[LO]: {err}. ABORTING", logger.FAIL)
+        exit(1)
+    def _err(self, err):
+        logger.log(f"[LO]: {err}", logger.FAIL)
+    def _info(self, msg):
+        logger.log(f"[LO]: {msg}", logger.INFO)
+    def _dbg(self, msg):
+        if self.debug:
+            self._info(msg)
