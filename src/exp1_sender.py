@@ -1,6 +1,5 @@
 from client import Client
 from authority import Authority
-from zmqServer import ZMQserver
 import time
 import pyais
 import matplotlib.pyplot as plt
@@ -16,5 +15,11 @@ if __name__ == "__main__":
     client.setup()
     client.update_repos()
 
-    while True:
-        time.sleep(0.5)
+    input('Click enter when ready')
+
+    with open("../ais_logs/AIS_log_exp1.txt", 'r') as f:
+        messages = f.readlines()
+
+    for m in messages:
+        client.send_message(m.strip().encode('ascii'))
+        time.sleep(1)

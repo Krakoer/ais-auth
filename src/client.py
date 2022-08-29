@@ -364,7 +364,7 @@ class Client:
                 msg = self.aiserial.receive_phrase()
 
             msg = msg.strip()
-            # self._dbg(msg)
+            self._dbg(msg)
 
             if self.verify:
                 try:
@@ -408,7 +408,7 @@ class Client:
                             if id_sender_str not in self.public_key_repo:
                                 self.ask_public_key(decoded["mmsi"])
                                 continue
-                            if self.public_key_repo[id_sender_str] in self.revocation_repo:
+                            if id_sender_str in self.revocation_repo and self.public_key_repo[id_sender_str] in self.revocation_repo[id_sender_str]:
                                 self._err("Got msg from revocated key")
                                 self.reject_msg(msg_bytes)
 
