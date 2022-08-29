@@ -72,7 +72,7 @@ class Client:
         """
         if mmsi in self.authenticated:
             unsigned = self.authenticated[mmsi]
-            if unsigned <= sign_every:
+            if unsigned <= self.sign_every:
                 return True
             self.authenticated.pop(mmsi)
 
