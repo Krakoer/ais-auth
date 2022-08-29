@@ -6,7 +6,7 @@ if __name__=="__main__":
     auhtority_url = "http://92.222.82.236:3000"
 
     mmsi = 338427627
-    client = Client(mmsi, auhtority_url, simulate=False, debug=debug, cleanup=True, retransmit=True, flag_unauth=False)
+    client = Client(mmsi, auhtority_url, simulate=False, debug=debug, cleanup=True, retransmit=True, flag_unauth=True)
 
     client.setup()
     client.update_repos()
