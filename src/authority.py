@@ -101,7 +101,7 @@ class Authority:
             abort(f"Fail to register : {e}")
 
     def _run(self):
-        self.app.run(host=self.url, port=self.port, quiet=True)
+        self.app.run(host=self.url, port=self.port)
 
     def load_from_files(self):
         with open(self.repo_path+"user-pk", "r") as f:
