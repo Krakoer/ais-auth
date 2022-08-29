@@ -18,7 +18,7 @@ class Authority:
         self.app = Bottle()                 
         self._route()                       # From solution https://stackoverflow.com/a/16059246 to run multiple servers
         self.user_repo = {}                 # Store public keys of users
-        self.revocation = {[]}                # Revocation repo
+        self.revocation = []                # Revocation repo
         self.repo_path = "./LO-files/"      # Local repo to store everything
         
         self.tsai = TsaiKGC("a.param")
