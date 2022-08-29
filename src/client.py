@@ -81,19 +81,23 @@ class Client:
 
     def _garbage_collector_thread(self):
         # Every 1 second, check if messages have no signature for more than 10 seconds and sends them with [UNAUTH] flag
+        self._dbg("Start gb thread")
         while True:
-            for msg_id, msg_dict in self.buffer.items():
+            for msg_id, msg_dict in self.buffer.copy().items():
                 if time.time() - msg_dict["time"] >= 10: # If the message hanged there for more than 10 seconds without auth
                     # If user is auth drop it, otherwise send with flag
                     decoded = pyais.decode(msg_dict["msg"]).asdict()
                     if decoded["msg_type"] in self.non_critical and self._is_auth(decoded["mmsi"]):
-                        self.buffer.drop(msg_id)
+                        self.buffer.pop(msg_id)
                     else:
-                        msg_5 = pyais.encode_dict({"msg_type":5, "mmsi": decoded["mmsi"], "shipname":"[UNAUTH]"})
+                        msg_5 = pyais.encode_dict({"msg_type":5, "mmsi": decoded["mmsi"], "shipname":"[UNAUTH]", "callsign": "HIB"}, talker="AIVDM")
                         if self.retransmit and not self.simulate:
                             for m in msg_5:
-                                self.aiserial.retransmit(m)
+                                self.aiserial.retransmit(m.encode("ascii"))
                         self.aiserial.retransmit(msg_dict["msg"])
+                        self.buffer.pop(msg_id)
+                        if self.debug:
+                            self._err(f"Flagged unauth message: {msg_dict['msg']}")
 
 
             time.sleep(1)
@@ -184,7 +188,7 @@ class Client:
 
         # Step 7 : If we want to flag the unauth msgs, run the thread
         if self.verify and self.retransmit and self.flag_unauth:
-            threading.Thread(target=self._garbage_collector_thread, daemon=True)
+            threading.Thread(target=self._garbage_collector_thread, daemon=True).start()
 
         # We're done !
         
@@ -360,7 +364,7 @@ class Client:
                 msg = self.aiserial.receive_phrase()
 
             msg = msg.strip()
-            self._dbg(msg)
+            # self._dbg(msg)
 
             if self.verify:
                 try:
@@ -421,8 +425,8 @@ class Client:
                             else:
                                 self.reject_msg(msg_bytes)
                     else:
-                        self._dbg(f"sha256 of signature : {bytearray(decoded['data'])[69:]}")
-                        self._dbg(f"id sender bytes of signature : {id_sender_bytes}")
+                        # self._dbg(f"sha256 of signature : {bytearray(decoded['data'])[69:]}")
+                        # self._dbg(f"id sender bytes of signature : {id_sender_bytes}")
                         self._info(f"Got sign without msg : id was {msg_id}")
 
                 # If it's a public key request send the public key. It does not need to be signed !
@@ -451,10 +455,10 @@ class Client:
                 else:
                     try:
                         id_sender_bytes = str(pyais.decode(msg).asdict()["mmsi"]).encode('ascii')
-                        self._dbg(f"id sender byte : {id_sender_bytes}")
-                        self._dbg(f"sha256 : {sha256(msg[6:-2]).digest()[:4]}")
+                        # self._dbg(f"id sender byte : {id_sender_bytes}")
+                        # self._dbg(f"sha256 : {sha256(msg[6:-2]).digest()[:4]}")
                         msg_id = int.from_bytes(sha256(msg[6:-2]).digest()[:4]+id_sender_bytes, 'little') # Remove the first 6 chars cause when sending its !AIVDO and when receiving its !AIVDM, so id will change
-                        self._dbg(f"Putting {msg} in {msg_id}")
+                        # self._dbg(f"Putting {msg} in {msg_id}")
                         self.buffer[msg_id] = {"msg":msg, "time": int(time.time())}
                     except:
                         continue

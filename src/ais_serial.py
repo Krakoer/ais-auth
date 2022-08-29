@@ -45,4 +45,4 @@ class AISerial:
         asyncio.run(self._send_async(string))
 
     def retransmit(self, msg):
-        self.serial_retransmit.write(msg+b"\r\b")
+        self.serial_retransmit.write(msg+b"\r\n")
