@@ -18,7 +18,7 @@ class Authority:
         self.app = Bottle()                 
         self._route()                       # From solution https://stackoverflow.com/a/16059246 to run multiple servers
         self.user_repo = {}                 # Store public keys of users
-        self.revocation = []                # Revocation repo
+        self.revocation = {[]}                # Revocation repo
         self.repo_path = "./LO-files/"      # Local repo to store everything
         
         self.tsai = TsaiKGC("a.param")
@@ -61,7 +61,7 @@ class Authority:
         self.app.route("/send-pk", callback = self._send_pk, method="POST")         # Post user pk once generated
 
     def _user_pk(self):
-        return self.user_public_key_repo
+        return self.user_repo
 
     def _revocated(self):
         return self.revocation
@@ -105,13 +105,13 @@ class Authority:
 
     def load_from_files(self):
         with open(self.repo_path+"user-pk", "r") as f:
-            self.user_public_key_repo = json.load(f)
+            self.user_repo = json.load(f)
         with open(self.repo_path+"revocation", "r") as f:
             self.revocation = json.load(f)
 
     def save_repos(self):
         with open(self.repo_path+"user-pk", "w") as f:
-            json.dump(self.user_public_key_repo, f)
+            json.dump(self.user_repo, f)
         with open(self.repo_path+"revocation", "w") as f:
             json.dump(self.revocation, f)
 
