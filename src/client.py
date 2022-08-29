@@ -90,7 +90,7 @@ class Client:
                     if decoded["msg_type"] in self.non_critical and self._is_auth(decoded["mmsi"]):
                         self.buffer.pop(msg_id)
                     else:
-                        msg_5 = pyais.encode_dict({"msg_type":5, "mmsi": decoded["mmsi"], "shipname":"[UNAUTH]", "callsign": "HIB"}, talker="AIVDM")
+                        msg_5 = pyais.encode_dict({"msg_type":5, "mmsi": decoded["mmsi"], "shipname":"[UNAUTH]", "callsign": "HIB"}, talker_id="AIVDM")
                         if self.retransmit and not self.simulate:
                             for m in msg_5:
                                 self.aiserial.retransmit(m.encode("ascii"))
@@ -355,7 +355,7 @@ class Client:
         mmsi = decoded["mmsi"]
         logger.log(f"[{self.mmsi}]: Received UNsigned message : {message} from {mmsi}", logger.FAIL)
         if self.flag_unauth:
-            msg_5 = pyais.encode_dict({"msg_type":5, "mmsi": decoded["mmsi"], "shipname":"[UNAUTH]", "callsign": "HIB"}, talker="AIVDM")
+            msg_5 = pyais.encode_dict({"msg_type":5, "mmsi": decoded["mmsi"], "shipname":"[UNAUTH]", "callsign": "HIB"}, talker_id="AIVDM")
             if self.retransmit and not self.simulate:
                 for m in msg_5:
                     self.aiserial.retransmit(m.encode("ascii"))
