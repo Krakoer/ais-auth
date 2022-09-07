@@ -288,6 +288,7 @@ class Client:
     def send_message(self, message: bytes):
         self._dbg(f"Sending {message}")
         msg_type = pyais.decode(message).asdict()["msg_type"]
+        mmsi = pyais.decode(message).asdict()['mmsi']
         # if we need to authenticate, and either it's a non critical msg that needs auth or another message type
         if self.auth and ((self.not_signed >= self.sign_every and msg_type in self.non_critical) or msg_type not in self.non_critical) :
             # reset not signed
@@ -298,11 +299,10 @@ class Client:
             # Then we need to sign the message
             t = time.time()
             timestamp = int(t).to_bytes(4, 'little') # 32bits timestamp
-            t2 = int(t+15).to_bytes(4, 'little') # 32bits timestamp
-            signature = self.tsai.sign(sha256(message[6:-2]+t2).digest()) # Sign sha256(msg|timestamp), we remove first 6 and 2 last (checksum) chars from msg cause when sending its !AIVDO and when receiving its !AIVDM so msg id will change 
+            signature = self.tsai.sign(sha256(message[6:-2]+timestamp).digest()) # Sign sha256(msg|timestamp), we remove first 6 and 2 last (checksum) chars from msg cause when sending its !AIVDO and when receiving its !AIVDM so msg id will change 
             self._dbg(f"Signing {message} with id {sha256(message[6:-2]).digest()[:4]}")
             signature_msg = signature+timestamp+sha256(message[6:-2]).digest()[:4] # Send sign|timestamp|msg_id, we remove first 6 and 2 last (checksum) chars from msg cause when sending its !AIVDO and when receiving its !AIVDM so msg id will change 
-            ais_signature = self.send_dict({'msg_type': 8, "mmsi": int(self.mmsi), "data": signature_msg, "dac": 100, "fid": 0})
+            ais_signature = self.send_dict({'msg_type': 8, "mmsi": int(mmsi), "data": signature_msg, "dac": 100, "fid": 0})
             return
         # If we send an unsigned message and it's type one
         elif self.auth and self.not_signed < self.sign_every and msg_type in self.non_critical:
@@ -372,7 +372,7 @@ class Client:
                 msg = self.aiserial.receive_phrase()
 
             msg = msg.strip()
-            self._dbg(msg)
+            #self._dbg(msg)
 
             if self.verify:
                 try:
@@ -431,6 +431,8 @@ class Client:
                                     self.authenticated[pyais.decode(msg_bytes).asdict()["mmsi"]] = 0
                                 self.accept_msg(msg_bytes)
                             else:
+                                if self.debug:
+                                    self._err('Verification of signature failed')
                                 self.reject_msg(msg_bytes)
                     else:
                         # self._dbg(f"sha256 of signature : {bytearray(decoded['data'])[69:]}")
@@ -479,7 +481,7 @@ class Client:
         threading.Thread(target=self.receive_thread, daemon=True).start()
 
     def __del__(self):
-        self._info("Exiting")
+        #self._info("Exiting")
         if self.cleanup:
             self.cleanup()
     def cleanup(self):
